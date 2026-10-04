@@ -73,14 +73,15 @@ namespace RCGCompanion
         private float _retreatUntil;
         private float _range = -1f;
         private int _missStreak;
+        private int _groundPress;
+        private int _groundCredited = -1;
+        private float _carryIdleSince = -1f;
 
         // Defesa
         private CombatEntity _lastThreat;
         private float _lastThreatStart = -1f;
         private Defense _defense;
         private float _blockUntil;
-        private float _blockStartedAt = -1f;
-        private float _blockCooldownUntil;
         private float _dodgeCooldownUntil;
 
         // Outros
@@ -130,7 +131,6 @@ namespace RCGCompanion
             _lastThreat = null;
             _defense = Defense.None;
             _blockUntil = 0f;
-            _blockStartedAt = -1f;
             _pickTarget = null;
             InCombat = false;
             WantsToMove = false;
@@ -189,6 +189,15 @@ namespace RCGCompanion
         public void OnHitLanded()
         {
             _missStreak = 0;
+            if (_target != null && _target.IsLying && _groundPress > 0 && _groundCredited != _groundPress)
+            {
+                _groundPress--; // acertou no chao: repete o mesmo botao
+                _groundCredited = _groundPress;
+                if (CompanionPlugin.VerboseLog.Value)
+                {
+                    CompanionPlugin.Log.LogInfo("Acertou inimigo no chao com o botao " + (_groundPress % 4));
+                }
+            }
             float max = Mathf.Max(CompanionPlugin.AttackRange.Value, MinRange);
             _range = Mathf.Min(_range + 0.02f, max * 1.3f);
         }
@@ -289,7 +298,31 @@ namespace RCGCompanion
             }
             _comboStep = 0;
 
-            // 6) Sem luta: procura armas/comida por perto.
+            // Acabou a luta segurando objeto pesado (lixeira, bicicleta...): arremessa longe e segue.
+            if (p2.IsCarryingHeavyPickupObject() && p2.IsGrounded)
+            {
+                if (_carryIdleSince < 0f)
+                {
+                    _carryIdleSince = now;
+                }
+                else if (now - _carryIdleSince > 2f && now >= _nextPressAt)
+                {
+                    int away = p1 != null && p1.transform.position.x > p2.transform.position.x ? -1 : 1;
+                    if (FaceTowards(p2, p2.transform.position.x + away, ref o))
+                    {
+                        return Finish(o);
+                    }
+                    o.Heavy = true;
+                    _nextPressAt = now + 1.0f;
+                    return Finish(o);
+                }
+            }
+            else
+            {
+                _carryIdleSince = -1f;
+            }
+
+            // 6) Sem luta: procura comida por perto.
             if (StartPickup(p2, p1, now, ref o))
             {
                 return Finish(o);
@@ -363,82 +396,99 @@ namespace RCGCompanion
             {
                 return false; // no ar nao da pra defender
             }
-            CombatEntity threat = FindThreat(p2);
+            // Defesa ja em andamento: segura so ate o golpe passar e larga (pra contra-atacar).
+            if (_blockUntil > 0f)
+            {
+                if (now < _blockUntil)
+                {
+                    o.Block = true;
+                    return true;
+                }
+                _blockUntil = 0f;
+                _pauseUntil = 0f;      // contra-ataque imediato
+                _nextPressAt = now;
+                _comboStep = 0;
+            }
+
+            float start;
+            CombatEntity threat = FindThreat(p2, out start);
             if (threat == null)
             {
                 _lastThreat = null;
                 _defense = Defense.None;
+                return false;
+            }
+            if (threat != _lastThreat || !Mathf.Approximately(start, _lastThreatStart))
+            {
+                _lastThreat = threat;
+                _lastThreatStart = start;
+                _defense = ChooseDefense(threat, now);
+            }
+            if (_defense == Defense.None)
+            {
+                return false;
+            }
+
+            if (_defense == Defense.Dodge)
+            {
+                if (now < _dodgeCooldownUntil || !CanAct(p2))
+                {
+                    return false;
+                }
+                float dz = p2.transform.position.z - threat.transform.position.z;
+                int dir = Mathf.Abs(dz) < 0.05f ? (Random.value < 0.5f ? 1 : -1) : (dz > 0f ? 1 : -1);
+                o.Dodge = true;
+                o.V = dir * (int)_zSign;
+                _dodgeCooldownUntil = now + 1.2f;
+                _defense = Defense.None;
+                CompanionSpeech.Say("esquiva", 0.3f);
+                return true;
+            }
+
+            // Defesa so funciona de frente: vira para o inimigo antes de defender.
+            if (FaceTowards(p2, threat.transform.position.x, ref o))
+            {
+                return true;
+            }
+
+            float delay;
+            bool known = AttackLearner.TryGetDelay(threat, out delay);
+            bool timed = _defense == Defense.Parry && known;
+            if (timed)
+            {
+                float hitAt = start + delay;
+                if (now < hitAt - 0.06f)
+                {
+                    return true; // espera o instante do parry parada (sem se comprometer com ataque)
+                }
+                _blockUntil = Mathf.Max(now, hitAt) + 0.15f;
             }
             else
             {
-                float start;
-                bool attacking = AttackLearner.TryGetAttackStart(threat, out start);
-                float threatStart = attacking ? start : -1f;
-                if (threat != _lastThreat || !Mathf.Approximately(threatStart, _lastThreatStart))
-                {
-                    _lastThreat = threat;
-                    _lastThreatStart = threatStart;
-                    _defense = ChooseDefense(threat, attacking, now);
-                }
-
-                if (_defense == Defense.Dodge && now >= _dodgeCooldownUntil && CanAct(p2))
-                {
-                    float dz = p2.transform.position.z - threat.transform.position.z;
-                    int dir = Mathf.Abs(dz) < 0.05f ? (Random.value < 0.5f ? 1 : -1) : (dz > 0f ? 1 : -1);
-                    o.Dodge = true;
-                    o.V = dir * (int)_zSign;
-                    _dodgeCooldownUntil = now + 1.2f;
-                    _defense = Defense.None;
-                    CompanionSpeech.Say("esquiva", 0.3f);
-                    return true;
-                }
-
-                if (_defense == Defense.Parry && attacking)
-                {
-                    float delay;
-                    AttackLearner.TryGetDelay(threat, out delay);
-                    float hitAt = start + delay;
-                    FaceTowards(p2, threat.transform.position.x, ref o);
-                    if (now >= hitAt - 0.07f && now <= hitAt + 0.3f)
-                    {
-                        o.H = 0;
-                        o.Block = true;
-                        return true;
-                    }
-                    if (now < hitAt - 0.07f)
-                    {
-                        return true; // espera o momento certo sem se comprometer com um ataque
-                    }
-                }
-
-                if (_defense == Defense.Block && now >= _blockCooldownUntil)
-                {
-                    if (_blockStartedAt < 0f)
-                    {
-                        _blockStartedAt = now;
-                    }
-                    _blockUntil = now + 0.25f;
-                }
+                // Sem tempo confiavel: defende ja e segura no maximo 0,45s (ou ate bloquear o golpe).
+                _blockUntil = now + 0.45f;
             }
-
-            if (now < _blockUntil)
-            {
-                if (_blockStartedAt >= 0f && now - _blockStartedAt > 0.9f)
-                {
-                    _blockUntil = 0f;
-                    _blockStartedAt = -1f;
-                    _blockCooldownUntil = now + 1.4f;
-                    _defense = Defense.None;
-                    return false;
-                }
-                o.Block = true;
-                return true;
-            }
-            _blockStartedAt = -1f;
-            return false;
+            _defense = Defense.None;
+            o.Block = true;
+            return true;
         }
 
-        private Defense ChooseDefense(CombatEntity threat, bool attacking, float now)
+        // Chamado quando ela bloqueia um golpe: larga a defesa logo depois.
+        public void OnBlocked()
+        {
+            if (_blockUntil > 0f)
+            {
+                _blockUntil = Mathf.Min(_blockUntil, Time.time + 0.1f);
+            }
+        }
+
+        // Chamado quando ela apanha: nao adianta continuar defendendo.
+        public void OnDamaged()
+        {
+            _blockUntil = 0f;
+        }
+
+        private Defense ChooseDefense(CombatEntity threat, float now)
         {
             bool boss = IsBoss(threat);
             float r = Random.value;
@@ -451,7 +501,7 @@ namespace RCGCompanion
             }
             if (r < block)
             {
-                return learned && attacking && CompanionPlugin.UseParry.Value ? Defense.Parry : Defense.Block;
+                return learned && CompanionPlugin.UseParry.Value ? Defense.Parry : Defense.Block;
             }
             if (r < block + 0.15f && now >= _dodgeCooldownUntil)
             {
@@ -460,29 +510,50 @@ namespace RCGCompanion
             return Defense.None;
         }
 
-        private CombatEntity FindThreat(RCG.Player p2)
+        // So conta como ameaca um golpe que JA comecou, vindo de um inimigo perto,
+        // virado para ela e na mesma faixa de profundidade.
+        private CombatEntity FindThreat(RCG.Player p2, out float start)
         {
             Vector3 me = p2.transform.position;
+            CombatEntity best = null;
+            float bestStart = 0f;
+            float bestDist = float.MaxValue;
+            float now = Time.time;
             for (int i = 0; i < _enemies.Count; i++)
             {
-                EnemyEnitity ee = _enemies[i] as EnemyEnitity;
-                if (ee == null || ee._target != p2)
+                CombatEntity e = _enemies[i];
+                float s;
+                if (!AttackLearner.TryGetAttackStart(e, out s) || now - s > 1.0f)
                 {
                     continue;
                 }
-                Vector3 ep = ee.transform.position;
-                float reach = IsBoss(ee) ? 3.5f : 2.2f;
-                if (Mathf.Abs(ep.x - me.x) > reach || Mathf.Abs(ep.z - me.z) > 0.7f)
+                Vector3 ep = e.transform.position;
+                float dx = me.x - ep.x;
+                float reach = IsBoss(e) ? 3.5f : 1.9f;
+                if (Mathf.Abs(dx) > reach || Mathf.Abs(ep.z - me.z) > 0.5f)
                 {
                     continue;
                 }
-                float start;
-                if (AttackLearner.TryGetAttackStart(ee, out start) || ee.IsAttackingTarget || ee.AI_IsAboutToOrIsAttackingSomeone())
+                int facingMe = dx >= 0f ? 1 : -1;
+                if (Mathf.Abs(dx) > 0.15f && e.Facing.FacingSign != facingMe)
                 {
-                    return ee;
+                    continue; // golpe virado para o outro lado
+                }
+                EnemyEnitity ee = e as EnemyEnitity;
+                if (ee != null && ee._target != null && ee._target != p2 && Mathf.Abs(dx) > 0.9f)
+                {
+                    continue; // atacando outra pessoa, longe dela
+                }
+                float d = Mathf.Abs(dx);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = e;
+                    bestStart = s;
                 }
             }
-            return null;
+            start = bestStart;
+            return best;
         }
 
         private static bool CanAct(RCG.Player p2)
@@ -523,19 +594,35 @@ namespace RCGCompanion
                 }
             }
 
-            // Inimigo caido: o golpe no chao do jogo (EnemyLieCondition) so sai com ela praticamente
-            // em cima dele (|dx| <= 0.4, |dz| <= 0.2) e ele sendo o inimigo mais proximo dela.
+            // Inimigo caido: o golpe no chao (condicao "EnemyLie" nos dados do jogo) sai com ela a ate
+            // 1.0 na horizontal e 0.5 na profundidade, e o caido sendo o inimigo mais proximo dela.
+            // Fica AO LADO (nao em cima, senao esbarra no corpo), virada pra ele.
             if (target.IsLying && target.CanBeGroundhit && !p2.IsCarryingPickupObject())
             {
-                if (MoveTo(p2, t.x, t.z, 0.25f, 0.12f, ref o))
+                float gside = me.x <= t.x ? -1f : 1f;
+                bool placed = MoveTo(p2, t.x + gside * 0.55f, t.z, 0.25f, 0.18f, ref o);
+                bool closeG = Mathf.Abs(t.x - me.x) <= 0.9f && Mathf.Abs(t.z - me.z) <= 0.35f;
+                if (placed || closeG)
                 {
                     o.H = 0;
                     o.V = 0;
                     o.Run = false;
-                    if (now >= _nextPressAt)
+                    if (!FaceTowards(p2, t.x, ref o) && now >= _nextPressAt)
                     {
-                        o.Quick = true;
-                        _nextPressAt = now + Random.Range(0.18f, 0.26f);
+                        // Nao da pra saber pelos dados qual botao o combo usa: alterna ate acertar.
+                        switch (_groundPress % 4)
+                        {
+                            case 2: o.Heavy = true; break;
+                            case 3: o.Quick = true; o.V = -1; break;
+                            default: o.Quick = true; break;
+                        }
+                        if (CompanionPlugin.VerboseLog.Value)
+                        {
+                            CombatEntity closest = p2.GetEnemyTarget();
+                            CompanionPlugin.Log.LogInfo("Chao: botao " + (_groundPress % 4) + " dx=" + (t.x - me.x).ToString("0.00") + " dz=" + (t.z - me.z).ToString("0.00") + " alvoDoJogo=" + (closest == target ? "ok" : (closest == null ? "nada" : closest.name)) + " estado=" + p2.Fsm.GetCurrentState());
+                        }
+                        _groundPress++;
+                        _nextPressAt = now + Random.Range(0.22f, 0.3f);
                     }
                 }
                 _comboStep = 0;
@@ -874,7 +961,8 @@ namespace RCGCompanion
             MonoBehaviour best = null;
             float bestDist = float.MaxValue;
 
-            if (CompanionPlugin.UseWeapons.Value && !p2.IsCarryingPickupObject())
+            // Armas so durante a luta (fora de combate ela nao sai carregando lixeira por ai).
+            if (CompanionPlugin.UseWeapons.Value && combatOnly && !p2.IsCarryingPickupObject())
             {
                 float maxDist = combatOnly ? 2.2f : 4.5f;
                 foreach (Weapon w in Object.FindObjectsOfType<Weapon>())

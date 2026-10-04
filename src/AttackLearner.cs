@@ -13,6 +13,7 @@ namespace RCGCompanion
         private class Timing
         {
             public float Delay;
+            public float Spread = 0.15f; // desvio medio: se for grande, o tempo nao e confiavel
             public int Samples;
         }
 
@@ -33,6 +34,17 @@ namespace RCGCompanion
         public static string Key(CombatEntity e)
         {
             return e.GetType().Name + ":" + e.ClassName;
+        }
+
+        // Cada inimigo tem varios golpes com tempos diferentes: aprende por golpe tambem.
+        public static string MoveKey(CombatEntity e)
+        {
+            UnityEngine.Object move = e.CurrentMove as UnityEngine.Object;
+            if (move == null)
+            {
+                return null;
+            }
+            return Key(e) + ":" + move.name;
         }
 
         public static bool IsAttackState(string s)
@@ -76,10 +88,17 @@ namespace RCGCompanion
             return AttackStart.TryGetValue(e, out start);
         }
 
+        // So devolve o tempo se ele for confiavel (2+ amostras e pouca variacao).
         public static bool TryGetDelay(CombatEntity e, out float delay)
         {
+            string mk = MoveKey(e);
             Timing t;
-            if (Timings.TryGetValue(Key(e), out t) && t.Samples >= 2)
+            if (mk != null && Timings.TryGetValue(mk, out t) && t.Samples >= 2 && t.Spread <= 0.08f)
+            {
+                delay = t.Delay;
+                return true;
+            }
+            if (Timings.TryGetValue(Key(e), out t) && t.Samples >= 2 && t.Spread <= 0.06f)
             {
                 delay = t.Delay;
                 return true;
@@ -111,19 +130,36 @@ namespace RCGCompanion
             {
                 return;
             }
-            string key = Key(attacker);
+            Learn(Key(attacker), d);
+            string mk = MoveKey(attacker);
+            if (mk != null)
+            {
+                Learn(mk, d);
+            }
+            _dirty = true;
+        }
+
+        private static void Learn(string key, float d)
+        {
             Timing t;
             if (!Timings.TryGetValue(key, out t))
             {
                 t = new Timing();
                 Timings[key] = t;
             }
-            t.Delay = t.Samples == 0 ? d : t.Delay * 0.7f + d * 0.3f;
+            if (t.Samples == 0)
+            {
+                t.Delay = d;
+            }
+            else
+            {
+                t.Spread = t.Spread * 0.6f + Mathf.Abs(d - t.Delay) * 0.4f;
+                t.Delay = t.Delay * 0.7f + d * 0.3f;
+            }
             t.Samples++;
-            _dirty = true;
             if (CompanionPlugin.VerboseLog.Value)
             {
-                CompanionPlugin.Log.LogInfo("Aprendendo " + key + ": golpe acerta em " + t.Delay.ToString("0.000") + "s (" + t.Samples + " amostras)");
+                CompanionPlugin.Log.LogInfo("Aprendendo " + key + ": acerta em " + t.Delay.ToString("0.000") + "s, variacao " + t.Spread.ToString("0.000") + " (" + t.Samples + " amostras)");
             }
         }
 
@@ -166,13 +202,17 @@ namespace RCGCompanion
                         continue;
                     }
                     string[] v = parts[1].Split(';');
-                    if (v.Length != 2)
+                    if (v.Length < 2)
                     {
                         continue;
                     }
                     Timing t = new Timing();
                     t.Delay = float.Parse(v[0], System.Globalization.CultureInfo.InvariantCulture);
                     t.Samples = int.Parse(v[1]);
+                    if (v.Length >= 3)
+                    {
+                        t.Spread = float.Parse(v[2], System.Globalization.CultureInfo.InvariantCulture);
+                    }
                     Timings[parts[0]] = t;
                 }
                 CompanionPlugin.Log.LogInfo("Parry: " + Timings.Count + " tipos de inimigo ja conhecidos.");
@@ -194,7 +234,7 @@ namespace RCGCompanion
                 List<string> lines = new List<string>();
                 foreach (KeyValuePair<string, Timing> kv in Timings)
                 {
-                    lines.Add(kv.Key + "=" + kv.Value.Delay.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) + ";" + kv.Value.Samples);
+                    lines.Add(kv.Key + "=" + kv.Value.Delay.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) + ";" + kv.Value.Samples + ";" + kv.Value.Spread.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture));
                 }
                 File.WriteAllLines(FilePath, lines.ToArray());
                 _dirty = false;

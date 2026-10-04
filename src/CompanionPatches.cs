@@ -171,6 +171,7 @@ namespace RCGCompanion
             if (P2.Is(__instance) && damageInfo != null)
             {
                 AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
+                CompanionPlugin.Brain.OnDamaged();
             }
         }
     }
@@ -184,6 +185,7 @@ namespace RCGCompanion
             if (P2.Is(__instance) && damageInfo != null)
             {
                 AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
+                CompanionPlugin.Brain.OnBlocked();
             }
         }
     }
