@@ -27,6 +27,12 @@ namespace RCGCompanion
                 ShopRegular(store, p2, c, bought);
             }
 
+            string equipChange = CompanionPlugin.BuyAccessories.Value ? OptimizeEquips(c) : null;
+            if (equipChange != null)
+            {
+                bought.Add(equipChange);
+            }
+
             if (bought.Count == 0)
             {
                 CompanionPlugin.Log.LogInfo(p2.ClassName + " nao comprou nada (dinheiro: $" + Money(c).ToString("0.00") + ").");
@@ -121,18 +127,19 @@ namespace RCGCompanion
                 bought.Add(f.ItemNameEnglish + " (comeu)");
             }
 
-            // 2) Acessorios, se tiver espaco livre para equipar.
+            // 2) Acessorios: compra se for melhor que o pior que ela esta usando (ou se tiver espaco livre).
             if (CompanionPlugin.BuyAccessories.Value)
             {
-                equips.Sort((a, b) => b.ItemPrice.CompareTo(a.ItemPrice));
+                equips.Sort((a, b) => EquipScore(b).CompareTo(EquipScore(a)));
                 foreach (Data_EquipItem e in equips)
                 {
-                    int slot = FreeEquipSlot(c);
-                    if (slot < 0)
-                    {
-                        break;
-                    }
                     if (OwnsEquip(c, e) || !PlayerGlobalInventory.instance.PlayerInventories[(int)c].EquipInventory.CheckCanAddItem(e))
+                    {
+                        continue;
+                    }
+                    int worstSlot;
+                    int worstScore = WorstEquipped(c, out worstSlot);
+                    if (worstSlot < 0 || EquipScore(e) <= worstScore + 10)
                     {
                         continue;
                     }
@@ -141,8 +148,7 @@ namespace RCGCompanion
                         continue;
                     }
                     PlayerGlobalInventory.instance.ReceiveItem(c, e);
-                    Equip(c, slot, e);
-                    bought.Add(e.ItemNameEnglish + " (equipou)");
+                    bought.Add(e.ItemNameEnglish);
                 }
             }
 
@@ -239,28 +245,123 @@ namespace RCGCompanion
             return false;
         }
 
-        private static int FreeEquipSlot(PlayerCharacters c)
+        // Nota de utilidade de cada efeito de acessorio para uma lutadora controlada por IA.
+        internal static int EquipScore(Data_EquipItem e)
         {
-            Data_EquipItem[] eq = PlayerAttributes.Instance.Players[(int)c].Equips;
-            if (eq == null)
+            if (e == null)
             {
                 return -1;
             }
+            switch (e.EquipEffect)
+            {
+                case EquipEffect.InfiniteSP: return 100;
+                case EquipEffect.Refill5StaminaOnKill: return 75;
+                case EquipEffect.SuperArmorChance15: return 65;
+                case EquipEffect.PreventStun: return 60;
+                case EquipEffect.Damage10x_15PercSpeed: return 60;
+                case EquipEffect.IncreasedInvulnerability2Seconds: return 55;
+                case EquipEffect.SpecialFill: return 55;
+                case EquipEffect.GetUpFaster: return 50;
+                case EquipEffect.ReducedKnockdownChance10: return 50;
+                case EquipEffect.Regain1Stamina2Minutes: return 45;
+                case EquipEffect.StunDamage10: return 45;
+                case EquipEffect.ExplosiveHitChance5: return 42;
+                case EquipEffect.MaleDamage10: return 40;
+                case EquipEffect.FemaleDamage10: return 38;
+                case EquipEffect.PoisonChance10: return 38;
+                case EquipEffect.AndroidDamage10: return 30;
+                case EquipEffect.Reflect1Damage: return 35;
+                case EquipEffect.AGminus2APplus2: return 35;
+                case EquipEffect.GroundHitDamage10: return 32;
+                case EquipEffect.HitThrownWeaponsBack: return 30;
+                case EquipEffect.MoreItemsChance10: return 30;
+                case EquipEffect.Percent20MoreMoneyChance10: return 30;
+                case EquipEffect.LowerPrices10: return 30;
+                case EquipEffect.NoSlowHeavy: return 28;
+                case EquipEffect.ExtraRecruitHeart: return 25;
+                case EquipEffect.RecruitDamage10: return 25;
+                case EquipEffect.ThrowDamage10: return 22;
+                case EquipEffect.SprintKnockdown: return 20;
+                case EquipEffect.Speed6x: return 20;
+                case EquipEffect.HasebeCharm: return 20;
+                case EquipEffect.MamiCharm: return 20;
+                case EquipEffect.ThrownWeaponSpeed15: return 15;
+                case EquipEffect.DoubleJump: return 10;
+                case EquipEffect.EnemiesTaunt10: return 8;
+                case EquipEffect.FloatyJump: return 5;
+                case EquipEffect.SlowTimeOnPopUp3Seconds: return 5;
+                default: return 20;
+            }
+        }
+
+        // Retorna a nota do pior acessorio equipado (ou -1 se tiver espaco vazio).
+        private static int WorstEquipped(PlayerCharacters c, out int slot)
+        {
+            Data_EquipItem[] eq = PlayerAttributes.Instance.Players[(int)c].Equips;
+            slot = -1;
+            if (eq == null)
+            {
+                return int.MaxValue;
+            }
+            int worst = int.MaxValue;
             for (int i = 0; i < eq.Length && i < 2; i++)
             {
-                if (eq[i] == null)
+                int s = EquipScore(eq[i]);
+                if (s < worst)
                 {
-                    return i;
+                    worst = s;
+                    slot = i;
                 }
             }
-            return -1;
+            return worst;
+        }
+
+        // Equipa os 2 acessorios mais uteis que ela possui. Retorna uma descricao se mudou algo.
+        private static string OptimizeEquips(PlayerCharacters c)
+        {
+            Data_EquipItem[] eq = PlayerAttributes.Instance.Players[(int)c].Equips;
+            if (eq == null || eq.Length < 2)
+            {
+                return null;
+            }
+            List<Data_EquipItem> owned = new List<Data_EquipItem>();
+            foreach (Data_Item it in PlayerGlobalInventory.instance.PlayerInventories[(int)c].EquipInventory.Items)
+            {
+                Data_EquipItem e = it as Data_EquipItem;
+                if (e != null && !owned.Exists(x => x.ItemNameEnglish == e.ItemNameEnglish))
+                {
+                    owned.Add(e);
+                }
+            }
+            if (owned.Count == 0)
+            {
+                return null;
+            }
+            owned.Sort((a, b) => EquipScore(b).CompareTo(EquipScore(a)));
+            Data_EquipItem best0 = owned[0];
+            Data_EquipItem best1 = owned.Count > 1 ? owned[1] : null;
+            if (SameSet(eq[0], eq[1], best0, best1))
+            {
+                return null;
+            }
+            eq[0] = best0;
+            eq[1] = best1;
+            SaveEquips(c, eq);
+            return "equipou " + best0.ItemNameEnglish + (best1 != null ? " + " + best1.ItemNameEnglish : string.Empty);
+        }
+
+        private static bool SameSet(Data_EquipItem a0, Data_EquipItem a1, Data_EquipItem b0, Data_EquipItem b1)
+        {
+            string x0 = a0 != null ? a0.ItemNameEnglish : string.Empty;
+            string x1 = a1 != null ? a1.ItemNameEnglish : string.Empty;
+            string y0 = b0 != null ? b0.ItemNameEnglish : string.Empty;
+            string y1 = b1 != null ? b1.ItemNameEnglish : string.Empty;
+            return (x0 == y0 && x1 == y1) || (x0 == y1 && x1 == y0);
         }
 
         // Igual ao UI_PhoneScreen_OutfitsV2.EquipItemsOnPlayer.
-        private static void Equip(PlayerCharacters c, int slot, Data_EquipItem e)
+        private static void SaveEquips(PlayerCharacters c, Data_EquipItem[] eq)
         {
-            Data_EquipItem[] eq = PlayerAttributes.Instance.Players[(int)c].Equips;
-            eq[slot] = e;
             List<string> names = new List<string>();
             names.Add(eq[0] != null ? eq[0].name : string.Empty);
             names.Add(eq.Length > 1 && eq[1] != null ? eq[1].name : string.Empty);

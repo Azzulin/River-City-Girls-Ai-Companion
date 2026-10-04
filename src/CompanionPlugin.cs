@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace RCGCompanion
 {
-    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "1.0.0")]
+    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.0.0")]
     public class CompanionPlugin : BaseUnityPlugin
     {
         internal static CompanionPlugin Instance;
@@ -40,6 +40,15 @@ namespace RCGCompanion
         internal static ConfigEntry<float> MoneyReserve;
         internal static ConfigEntry<int> CarryHealItems;
         internal static ConfigEntry<bool> BuyAccessories;
+
+        // Novas habilidades
+        internal static ConfigEntry<KeyboardShortcut> ModeKey;
+        internal static ConfigEntry<bool> UseParry;
+        internal static ConfigEntry<bool> UseWeapons;
+        internal static ConfigEntry<bool> PickupFood;
+        internal static ConfigEntry<bool> UseRecruits;
+        internal static ConfigEntry<bool> Talk;
+        internal static ConfigEntry<float> TalkFrequency;
 
         internal static ConfigEntry<bool> VerboseLog;
 
@@ -82,7 +91,15 @@ namespace RCGCompanion
             ShopEnabled = Config.Bind("Loja", "FazerCompras", true, "Quando voce sai de uma loja/dojo, ela faz as compras dela.");
             MoneyReserve = Config.Bind("Loja", "DinheiroReserva", 10f, "Quanto dinheiro ela tenta guardar (exceto para golpes do dojo).");
             CarryHealItems = Config.Bind("Loja", "ComidasNaMochila", 2, "Quantas comidas de cura ela tenta carregar.");
-            BuyAccessories = Config.Bind("Loja", "ComprarAcessorios", true, "Compra e equipa acessorios quando tem espaco livre.");
+            BuyAccessories = Config.Bind("Loja", "ComprarAcessorios", true, "Compra acessorios e equipa sempre os 2 mais uteis que ela tiver.");
+
+            ModeKey = Config.Bind("Geral", "TeclaOrdens", new KeyboardShortcut(KeyCode.F10), "Troca a ordem da parceira: Normal > Agressiva > Defensiva > Fica aqui.");
+            UseParry = Config.Bind("Combate", "UsarParry", true, "Aprende o tempo dos golpes de cada inimigo e faz parry.");
+            UseWeapons = Config.Bind("Combate", "UsarArmas", true, "Pega armas do chao e usa.");
+            PickupFood = Config.Bind("Cura", "PegarComidaDoChao", true, "Pega comida que os inimigos deixam cair (se voce estiver mais longe dela).");
+            UseRecruits = Config.Bind("Combate", "UsarRecrutas", true, "Chama o recruta dela quando tem muitos inimigos ou chefe, e recruta inimigos que ela agarrar.");
+            Talk = Config.Bind("Personalidade", "Falas", true, "Ela comenta o que acontece (texto em cima dela).");
+            TalkFrequency = Config.Bind("Personalidade", "FrequenciaDasFalas", 1f, new ConfigDescription("0 = quase nunca, 1 = normal.", new AcceptableValueRange<float>(0f, 1f)));
 
             VerboseLog = Config.Bind("Debug", "LogDetalhado", false, "Escreve detalhes da IA no LogOutput.log do BepInEx.");
 
@@ -90,9 +107,19 @@ namespace RCGCompanion
             _deathRespawnInstance = AccessTools.Field(typeof(DeathRespawnManager), "s_instance");
             _playerManagerInstance = AccessTools.Field(typeof(PlayerManager), "s_instance");
 
+            AttackLearner.Load();
             new Harmony("rcg.aicompanion").PatchAll(typeof(CompanionPlugin).Assembly);
-            Log.LogInfo("RCG AI Companion carregado. F8 liga/desliga, F9 chama a parceira.");
+            Log.LogInfo("RCG AI Companion 2.0 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
         }
+
+        private void OnApplicationQuit()
+        {
+            AttackLearner.Save();
+        }
+
+        private float _nextLearnerSave;
+
+        private static readonly string[] ModeNames = { "Modo: Normal", "Modo: Agressiva!", "Modo: Defensiva", "Fico aqui!" };
 
         internal static PlayerManager PM
         {
@@ -109,13 +136,16 @@ namespace RCGCompanion
             return p != null && p.isActiveAndEnabled && p.Stamina > 0 && !p.PlayerDeath.IsDying();
         }
 
-        internal static void Say(string msg)
+        internal static void Say(string msg, bool log = true)
         {
-            if (Instance != null)
+            if (Instance != null && Instance._pendingMessages.Count < 3)
             {
                 Instance._pendingMessages.Add(msg);
             }
-            Log.LogInfo(msg);
+            if (log)
+            {
+                Log.LogInfo(msg);
+            }
         }
 
         private void Update()
@@ -132,6 +162,12 @@ namespace RCGCompanion
                 }
             }
 
+            if (Time.time >= _nextLearnerSave)
+            {
+                _nextLearnerSave = Time.time + 60f;
+                AttackLearner.Save();
+            }
+
             if (!IsActive || GameState.CurrentState != GameStates.Playing)
             {
                 return;
@@ -144,6 +180,18 @@ namespace RCGCompanion
             }
             RCG.Player p1 = pm.PlayerOne;
             RCG.Player p2 = pm.PlayerTwo;
+
+            if (ModeKey.Value.IsDown())
+            {
+                CompanionMode next = (CompanionMode)(((int)Brain.Mode + 1) % 4);
+                Brain.SetMode(next, p1, p2);
+                Log.LogInfo("Ordem: " + next);
+                if (p2 != null)
+                {
+                    _pendingMessages.Clear();
+                    p2.DisplayTextAbove(ModeNames[(int)next], true);
+                }
+            }
 
             if (p2 == null)
             {
@@ -255,7 +303,7 @@ namespace RCGCompanion
             Helper_ApplyItemToPlayer.ApplyItemToPlayer(character, used);
             p2.UpdateFromAttributes();
             _healCooldownUntil = Time.time + HealCooldown.Value;
-            p2.DisplayTextAbove("Nham!", false);
+            CompanionSpeech.Say("comer");
             Log.LogInfo(p2.ClassName + " comeu " + used.ItemNameEnglish + " (vida agora " + Mathf.RoundToInt(p2.StaminaPercent * 100f) + "%)");
         }
 
@@ -271,7 +319,11 @@ namespace RCGCompanion
             float dy = Mathf.Abs(a.y - b.y);
             float dist = Vector3.Distance(a, b);
 
-            if (dx > 11f || dy > 2.5f)
+            if (Brain.Mode == CompanionMode.FicaAqui)
+            {
+                _farTimer = 0f;
+            }
+            else if (dx > 11f || dy > 2.5f)
             {
                 _farTimer += Time.deltaTime;
             }

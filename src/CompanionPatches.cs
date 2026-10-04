@@ -55,14 +55,14 @@ namespace RCGCompanion
             bool locked = __instance.LockStandardButtonPress;
             SetH(__instance, o.H);
             SetV(__instance, o.V);
-            SetJump(__instance, o.Jump && !locked);
+            SetJump(__instance, false);
             SetJumpRelease(__instance, false);
             SetQuick(__instance, o.Quick && !locked);
-            __instance.InteractQuick = false;
+            __instance.InteractQuick = o.Interact && !locked;
             SetHeavy(__instance, o.Heavy && !locked);
             SetSpecial(__instance, o.Special && !locked);
             SetBlock(__instance, o.Block && !locked);
-            SetRecruit(__instance, false);
+            SetRecruit(__instance, o.Recruit && !locked);
             SetTaunt(__instance, false);
             SetRun(__instance, o.Run && o.H != 0);
             SetDodge(__instance, o.Dodge);
@@ -140,16 +140,92 @@ namespace RCGCompanion
         }
     }
 
+    internal static class P2
+    {
+        public static bool Is(RCG.Player p)
+        {
+            PlayerManager pm = CompanionPlugin.PM;
+            return p != null && pm != null && pm.PlayerTwo == p;
+        }
+    }
+
     // Usado para a IA ajustar o alcance: se esta acertando, esta na distancia certa.
     [HarmonyPatch(typeof(RCG.Player), "HitSomething")]
     internal static class PlayerHitPatch
     {
         private static void Postfix(RCG.Player __instance)
         {
-            PlayerManager pm = CompanionPlugin.PM;
-            if (pm != null && pm.PlayerTwo == __instance)
+            if (P2.Is(__instance))
             {
                 CompanionPlugin.Brain.OnHitLanded();
+            }
+        }
+    }
+
+    // Parry: aprende o tempo do golpe quando ela apanha...
+    [HarmonyPatch(typeof(RCG.Player), "DamageEvent", new Type[] { typeof(DamageInfo) })]
+    internal static class PlayerDamagePatch
+    {
+        private static void Prefix(RCG.Player __instance, DamageInfo damageInfo)
+        {
+            if (P2.Is(__instance) && damageInfo != null)
+            {
+                AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
+            }
+        }
+    }
+
+    // ...ou quando defende.
+    [HarmonyPatch(typeof(RCG.Player), "BlockEvent")]
+    internal static class PlayerBlockPatch
+    {
+        private static void Prefix(RCG.Player __instance, DamageInfo damageInfo)
+        {
+            if (P2.Is(__instance) && damageInfo != null)
+            {
+                AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(RCG.Player), "BlockHit_PushBack")]
+    internal static class PlayerParryPatch
+    {
+        private static void Postfix(RCG.Player __instance, bool __result)
+        {
+            if (__result && P2.Is(__instance))
+            {
+                CompanionSpeech.Say("parry", 0.8f);
+                if (CompanionPlugin.VerboseLog.Value)
+                {
+                    CompanionPlugin.Log.LogInfo("Parry!");
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(RCG.Player), "KilledSomething")]
+    internal static class PlayerKillPatch
+    {
+        private static void Postfix(RCG.Player __instance)
+        {
+            if (P2.Is(__instance))
+            {
+                CompanionSpeech.Say("kill", 0.35f);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(PlayerAttributes), "LevelUp")]
+    internal static class LevelUpPatch
+    {
+        private static void Postfix(PlayerCharacters _player)
+        {
+            PlayerManager pm = CompanionPlugin.PM;
+            if (pm != null && pm.PlayerTwo != null && pm.PlayerTwo.ClassNameToPlayerCharacter == _player)
+            {
+                CompanionSpeech.Say("nivel");
+                CompanionPlugin.Log.LogInfo(pm.PlayerTwo.ClassName + " subiu para o nivel " + PlayerAttributes.Instance.Players[(int)_player].Level);
             }
         }
     }
