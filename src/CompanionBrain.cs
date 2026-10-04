@@ -76,11 +76,15 @@ namespace RCGCompanion
         private int _groundPress = 2; // o log mostrou que o ataque forte acerta inimigo caido
         private int _revivePress;
         private float _defenseReadyAt;
+        private float _turnStart = -1f;
+        private float _turnLastCall;
+        private float _turnFailUntil;
         private string _intent = string.Empty;
         private bool _p2WasDown;
         private float _p1DownAt;
         private readonly int[] _groundHits = new int[4];
-        private int _groundLocked = -1;
+        private int _groundLocked = 2; // varias sessoes confirmaram: ataque forte acerta inimigo caido
+        private int _groundMissStreak;
         private readonly int[] _reviveHits = new int[3];
         private int _reviveLocked = -1;
 
@@ -109,7 +113,6 @@ namespace RCGCompanion
 
         // Outros
         private float _nextRevivePress;
-        private float _nextFacingTap;
         private float _recruitCooldownUntil;
         private bool _pressedRecruitInGrab;
         private CombatEntity _lastBoss;
@@ -212,6 +215,10 @@ namespace RCGCompanion
         public void OnHitLanded()
         {
             _missStreak = 0;
+            if (_target != null && _target.IsLying)
+            {
+                _groundMissStreak = 0;
+            }
             if (_target != null && _target.IsLying && _groundPress > 0 && _groundCredited != _groundPress)
             {
                 _groundPress--; // acertou no chao: repete o mesmo botao
@@ -724,6 +731,18 @@ namespace RCGCompanion
             // Inimigo caido: o golpe no chao (condicao "EnemyLie" nos dados do jogo) sai com ela a ate
             // 1.0 na horizontal e 0.5 na profundidade, e o caido sendo o inimigo mais proximo dela.
             // Fica AO LADO (nao em cima, senao esbarra no corpo), virada pra ele.
+            // Inimigo se levantando nao toma dano: nao gasta golpe, fica na distancia esperando ele levantar.
+            string tState = target.Fsm.GetCurrentState() ?? string.Empty;
+            if (tState.Contains("Getup"))
+            {
+                float wside = me.x <= t.x ? -1f : 1f;
+                MoveTo(p2, t.x + wside * _range * 1.1f, t.z, 0.25f, 0.2f, ref o);
+                FaceTowards(p2, t.x, ref o);
+                _intent = "EsperandoLevantar";
+                _comboStep = 0;
+                return;
+            }
+
             if (target.IsLying && target.CanBeGroundhit && !p2.IsCarryingPickupObject())
             {
                 _intent = "AtacarCaido";
@@ -741,6 +760,13 @@ namespace RCGCompanion
                         if (_groundLocked >= 0)
                         {
                             _groundPress = _groundLocked; // ja sabe qual botao funciona
+                            if (++_groundMissStreak > 4)
+                            {
+                                // 4 golpes seguidos sem acertar com o botao "certo": volta a testar os outros.
+                                CompanionTelemetry.Event("ChaoBotao", "botao " + _groundLocked + " errou 4 seguidas, testando os outros");
+                                _groundLocked = -1;
+                                _groundMissStreak = 0;
+                            }
                         }
                         switch (_groundPress % 4)
                         {
@@ -828,10 +854,12 @@ namespace RCGCompanion
             }
 
             bool inPlace = MoveTo(p2, standX, t.z, 0.22f, zTol, ref o);
-            bool closeEnough = dx <= range * 1.15f && Mathf.Abs(t.z - me.z) <= zTol * 1.4f;
+            // "Perto o suficiente" exige uma distancia minima: colada no inimigo ela nao consegue
+            // virar nem acertar, entao primeiro recua para a distancia de golpe.
+            bool closeEnough = dx <= range * 1.15f && dx >= range * 0.4f && Mathf.Abs(t.z - me.z) <= zTol * 1.4f;
             if (!inPlace && !closeEnough)
             {
-                _intent = "Aproximar";
+                _intent = dx < range * 0.4f ? "Recuar(colada)" : "Aproximar";
                 return;
             }
             o.H = 0;
@@ -1534,23 +1562,40 @@ namespace RCGCompanion
         }
 
         // Retorna true se precisou "tocar" o direcional para virar de frente.
+        // O registro mostrou dois problemas aqui:
+        // 1) um toque de 1 frame no direcional nao vira a personagem (o jogo precisa de alguns frames);
+        //    ela ficava tocando pra sempre (Andar/Parada a cada 0,05s, presa 20s em "Virar").
+        // 2) com o inimigo quase na mesma posicao X, cada passo troca o lado dele e ela nunca "acerta".
+        // Agora: segura o direcional ate virar (max 0,35s), ignora alvos praticamente em cima dela
+        // e, se nao conseguir virar, desiste por meio segundo e segue a vida.
         private bool FaceTowards(RCG.Player p2, float x, ref AiInput o)
         {
+            float now = Time.time;
             float dir = x - p2.transform.position.x;
-            if (Mathf.Abs(dir) < 0.05f)
+            if (Mathf.Abs(dir) < 0.25f || now < _turnFailUntil)
             {
+                _turnStart = -1f;
                 return false;
             }
             int want = dir > 0f ? 1 : -1;
             if (p2.Facing.FacingSign == want)
             {
+                _turnStart = -1f;
                 return false;
             }
-            if (Time.time >= _nextFacingTap)
+            if (_turnStart < 0f || now - _turnLastCall > 0.15f)
             {
-                o.H = want;
-                _nextFacingTap = Time.time + 0.05f;
+                _turnStart = now;
             }
+            _turnLastCall = now;
+            if (now - _turnStart > 0.35f)
+            {
+                _turnStart = -1f;
+                _turnFailUntil = now + 0.5f;
+                CompanionTelemetry.Event("VirarFalhou", "nao conseguiu virar em 0.35s (estado=" + (p2.Fsm.GetCurrentState() ?? "").Replace("RCG.", "") + " dx=" + dir.ToString("0.00") + ")");
+                return false;
+            }
+            o.H = want; // segura o direcional por varios frames ate o jogo virar
             return true;
         }
 
