@@ -76,6 +76,9 @@ namespace RCGCompanion
         private int _groundPress = 2; // o log mostrou que o ataque forte acerta inimigo caido
         private int _revivePress;
         private float _defenseReadyAt;
+        private string _intent = string.Empty;
+        private bool _p2WasDown;
+        private float _p1DownAt;
         private readonly int[] _groundHits = new int[4];
         private int _groundLocked = -1;
         private readonly int[] _reviveHits = new int[3];
@@ -249,6 +252,7 @@ namespace RCGCompanion
                 InCombat = false;
                 WantsToMove = false;
                 _airActive = false;
+                _intent = "Caida";
                 return Finish(o);
             }
 
@@ -258,10 +262,12 @@ namespace RCGCompanion
             // No meio de um pulo de plataforma ou de um combo aereo: termina o que comecou.
             if (Nav.Navigating && !p2.IsGrounded && p1 != null && Nav.Drive(p1, p2, ref o, (int)_zSign))
             {
+                _intent = "Plataforma(ar)";
                 return Finish(o);
             }
             if (_airActive && TickAir(p2, now, ref o))
             {
+                _intent = "ComboAereo";
                 return Finish(o);
             }
             AttackLearner.Track(_enemies);
@@ -272,14 +278,18 @@ namespace RCGCompanion
             if (p1Down && !_p1WasDown)
             {
                 CompanionSpeech.Say("parceiraCaiu");
+                _p1DownAt = now;
+                CompanionTelemetry.Event("JogadorCaiu", "indo reviver | distancia x=" + (p1.transform.position.x - p2.transform.position.x).ToString("0.00"));
             }
             else if (!p1Down && _p1WasDown && p1 != null && p1.Stamina > 0)
             {
                 CompanionSpeech.Say("revivida");
+                CompanionTelemetry.Event("Reviveu", "jogador de pe em " + (now - _p1DownAt).ToString("0.0") + "s");
             }
             _p1WasDown = p1Down;
             if (p1Down)
             {
+                _intent = "Reviver";
                 Revive(p2, p1, now, ref o);
                 return Finish(o);
             }
@@ -287,18 +297,20 @@ namespace RCGCompanion
             // 2) Segurando um inimigo agarrado: tenta recrutar se ela nao tem ajudante.
             if (HandleGrab(p2, ref o))
             {
+                _intent = "Agarrando(recrutar)";
                 return Finish(o);
             }
 
             // 3) Defesa: parry (se ja aprendeu o tempo do golpe), defesa normal ou esquiva.
             if (HandleDefense(p2, now, ref o))
             {
-                return Finish(o);
+                return Finish(o); // HandleDefense define a intencao exata
             }
 
             // 4) Pegar arma/comida que ja estava indo buscar.
             if (ContinuePickup(p2, now, ref o))
             {
+                _intent = "Pegar";
                 return Finish(o);
             }
 
@@ -308,9 +320,14 @@ namespace RCGCompanion
             if (target != null)
             {
                 TryRecruit(p2, target, now, ref o);
-                if (!o.Recruit)
+                if (o.Recruit)
                 {
-                    Fight(p2, p1, target, ref o);
+                    _intent = "Recruta";
+                }
+                else
+                {
+                    _intent = "Lutar";
+                    Fight(p2, p1, target, ref o); // Fight refina a intencao
                 }
                 return Finish(o);
             }
@@ -325,6 +342,7 @@ namespace RCGCompanion
                 }
                 else if (now - _carryIdleSince > 2f && now >= _nextPressAt)
                 {
+                    _intent = "LargarObjeto";
                     int away = p1 != null && p1.transform.position.x > p2.transform.position.x ? -1 : 1;
                     if (FaceTowards(p2, p2.transform.position.x + away, ref o))
                     {
@@ -343,20 +361,24 @@ namespace RCGCompanion
             // 6) Sem luta: procura comida por perto.
             if (StartPickup(p2, p1, now, ref o))
             {
+                _intent = "PegarComida";
                 return Finish(o);
             }
 
             // 7) Seguir o jogador (ou ficar no lugar). Se ele estiver em outra altura, refaz o caminho dele.
             if (Mode != CompanionMode.FicaAqui && CompanionPlugin.UsePlatforming.Value && p1 != null && Nav.NeedsPath(p1, p2) && Nav.Drive(p1, p2, ref o, (int)_zSign))
             {
+                _intent = "Plataforma";
                 return Finish(o);
             }
             if (Mode == CompanionMode.FicaAqui)
             {
+                _intent = "FicaAqui";
                 MoveTo(p2, _holdAnchor.x, _holdAnchor.z, 0.6f, 0.35f, ref o);
             }
             else if (p1 != null && p1.isActiveAndEnabled)
             {
+                _intent = "Seguir";
                 Vector3 pp = p1.transform.position;
                 float behind = -p1.Facing.FacingSign * 1.3f;
                 MoveTo(p2, pp.x + behind, pp.z + 0.35f, 0.6f, 0.35f, ref o);
@@ -480,11 +502,13 @@ namespace RCGCompanion
             {
                 if (now < _blockUntil)
                 {
+                    _intent = "Defesa(segurando)";
                     o.Block = true;
                     return true;
                 }
                 _blockUntil = 0f;
                 _defenseReadyAt = now + 0.5f;
+                CompanionTelemetry.Event("FimDefesa", "largou a defesa, contra-atacando");
                 _pauseUntil = 0f;      // contra-ataque imediato
                 _nextPressAt = now;
                 _comboStep = 0;
@@ -509,6 +533,9 @@ namespace RCGCompanion
                 _lastThreat = threat;
                 _lastThreatStart = start;
                 _defense = ChooseDefense(threat, now);
+                float kd;
+                bool kn = AttackLearner.TryGetDelay(threat, out kd);
+                CompanionTelemetry.Event("Ameaca", threat.name + " golpe=" + (threat.Fsm.GetCurrentState() ?? "").Replace("RCG.", "") + " comecou ha " + (now - start).ToString("0.00") + "s dx=" + (threat.transform.position.x - p2.transform.position.x).ToString("0.00") + " decisao=" + _defense + (kn ? " tempoConhecido=" + kd.ToString("0.00") + "s" : " tempoDesconhecido"));
                 if (CompanionPlugin.VerboseLog.Value && _defense != Defense.None)
                 {
                     CompanionPlugin.Log.LogInfo("Defesa: " + _defense + " contra " + threat.name + " (" + threat.Fsm.GetCurrentState() + ", golpe ha " + (now - start).ToString("0.00") + "s)");
@@ -532,6 +559,8 @@ namespace RCGCompanion
                 _dodgeCooldownUntil = now + 1.2f;
                 _defenseReadyAt = now + 0.5f;
                 _defense = Defense.None;
+                _intent = "Esquiva";
+                CompanionTelemetry.Count("Esquivas");
                 CompanionSpeech.Say("esquiva", 0.3f);
                 return true;
             }
@@ -539,6 +568,7 @@ namespace RCGCompanion
             // Defesa so funciona de frente: vira para o inimigo antes de defender.
             if (FaceTowards(p2, threat.transform.position.x, ref o))
             {
+                _intent = "Defesa(virando)";
                 return true;
             }
 
@@ -550,14 +580,19 @@ namespace RCGCompanion
                 float hitAt = start + delay;
                 if (now < hitAt - 0.06f)
                 {
+                    _intent = "Parry(esperando)";
                     return true; // espera o instante do parry parada (sem se comprometer com ataque)
                 }
                 _blockUntil = Mathf.Max(now, hitAt) + 0.15f;
+                _intent = "Parry";
+                CompanionTelemetry.Count("Tentativas de parry");
             }
             else
             {
                 // Sem tempo confiavel: defende ja e segura no maximo 0,45s (ou ate bloquear o golpe).
                 _blockUntil = now + 0.45f;
+                _intent = "Defesa";
+                CompanionTelemetry.Count("Defesas iniciadas");
             }
             _defense = Defense.None;
             o.Block = true;
@@ -681,6 +716,7 @@ namespace RCGCompanion
                     float zOff = (me.z >= t.z ? 1f : -1f) * 0.9f;
                     MoveTo(p2, t.x + away * 2.8f, t.z + zOff, 0.4f, 0.25f, ref o);
                     _comboStep = 0;
+                    _intent = "Chefe(recuar)";
                     return;
                 }
             }
@@ -690,6 +726,7 @@ namespace RCGCompanion
             // Fica AO LADO (nao em cima, senao esbarra no corpo), virada pra ele.
             if (target.IsLying && target.CanBeGroundhit && !p2.IsCarryingPickupObject())
             {
+                _intent = "AtacarCaido";
                 float gside = me.x <= t.x ? -1f : 1f;
                 bool placed = MoveTo(p2, t.x + gside * 0.55f, t.z, 0.25f, 0.18f, ref o);
                 bool closeG = Mathf.Abs(t.x - me.x) <= 0.9f && Mathf.Abs(t.z - me.z) <= 0.35f;
@@ -727,6 +764,7 @@ namespace RCGCompanion
             // Cercada (inimigo dos dois lados): esquiva pra fora da linha e se reposiciona.
             if (HandleSurrounded(p2, now, ref o))
             {
+                _intent = "Cercada(saindo)";
                 return;
             }
 
@@ -742,6 +780,7 @@ namespace RCGCompanion
             {
                 float zOut = t.z + (me.z >= t.z ? 0.8f : -0.8f);
                 MoveTo(p2, standX, zOut, 0.25f, 0.15f, ref o);
+                _intent = "Contornar";
                 return;
             }
 
@@ -751,6 +790,7 @@ namespace RCGCompanion
                 float back = Mode == CompanionMode.Defensiva ? 1.9f : Mathf.Lerp(1.6f, 1.05f, Aggressiveness);
                 MoveTo(p2, t.x + side * range * back, t.z, 0.25f, 0.3f, ref o);
                 FaceTowards(p2, t.x, ref o);
+                _intent = "Espacamento";
                 return;
             }
             float dx = Mathf.Abs(t.x - me.x);
@@ -769,6 +809,7 @@ namespace RCGCompanion
                     {
                         StartAir(target, toward, 3, false, Random.value < 0.4f);
                         TickAir(p2, now, ref o);
+                        _intent = "Malabarismo";
                         return;
                     }
                 }
@@ -780,6 +821,7 @@ namespace RCGCompanion
                     {
                         StartAir(target, toward, 1, true, false);
                         TickAir(p2, now, ref o);
+                        _intent = "EntradaPulando";
                         return;
                     }
                 }
@@ -789,6 +831,7 @@ namespace RCGCompanion
             bool closeEnough = dx <= range * 1.15f && Mathf.Abs(t.z - me.z) <= zTol * 1.4f;
             if (!inPlace && !closeEnough)
             {
+                _intent = "Aproximar";
                 return;
             }
             o.H = 0;
@@ -796,6 +839,7 @@ namespace RCGCompanion
 
             if (FaceTowards(p2, t.x, ref o))
             {
+                _intent = "Virar";
                 return;
             }
 
@@ -807,20 +851,24 @@ namespace RCGCompanion
                 if (ahead > 0f && ahead < range * 1.3f && Mathf.Abs(pp.z - me.z) < zTol * 1.5f)
                 {
                     o.V = (pp.z > me.z ? -1 : 1) * (int)_zSign;
+                    _intent = "EvitarFogoAmigo";
                     return;
                 }
             }
 
             if (now < _nextPressAt || now < _pauseUntil)
             {
+                _intent = _comboStep > 0 ? "Combo" : "AguardandoAtaque";
                 return;
             }
+            _intent = "Combo";
 
             if (CompanionPlugin.UseSpecials.Value && _comboStep == 0 && p2.SpecialPercent >= 0.5f && (CountEnemiesNear(me, 2.5f) >= 2 || (boss && vulnerable)) && Random.value < 0.35f + aggr * 0.2f)
             {
                 o.Special = true;
                 _nextPressAt = now + 0.7f;
                 RegisterSwing();
+                _intent = "Especial";
                 return;
             }
 
@@ -830,6 +878,7 @@ namespace RCGCompanion
                 _nextAirDecision = now + 1.5f;
                 StartAir(target, toward, 2, false, Random.value < 0.5f);
                 TickAir(p2, now, ref o);
+                _intent = "ComboAereo";
                 return;
             }
 
@@ -961,6 +1010,7 @@ namespace RCGCompanion
             _escapeCooldownUntil = now + 2.5f;
             o.Dodge = true;
             o.V = dir * (int)_zSign;
+            CompanionTelemetry.Event("Cercada", left + " inimigo(s) a esquerda x " + right + " a direita, esquivando na profundidade");
             if (CompanionPlugin.VerboseLog.Value)
             {
                 CompanionPlugin.Log.LogInfo("Cercada (" + left + " x " + right + "): saindo da linha.");
@@ -1079,6 +1129,7 @@ namespace RCGCompanion
             {
                 _missStreak = 0;
                 _range = Mathf.Max(MinRange, _range * 0.85f);
+                CompanionTelemetry.Event("Alcance", "8 golpes seguidos sem acertar: alcance reduzido para " + _range.ToString("0.00"));
                 if (CompanionPlugin.VerboseLog.Value)
                 {
                     CompanionPlugin.Log.LogInfo("Errando muito, diminuindo alcance para " + _range.ToString("0.00"));
@@ -1163,10 +1214,16 @@ namespace RCGCompanion
                 if (_pickTarget is PickupObject && p2.IsCarryingPickupObject() && p2.PickupObject == _pickTarget)
                 {
                     CompanionSpeech.Say("arma", 0.6f);
+                    CompanionTelemetry.Event("PegouArma", _pickTarget.name);
                 }
                 else if (_pickTarget.isActiveAndEnabled && now > _pickGiveUpAt)
                 {
                     _pickBlacklist[_pickTarget.GetInstanceID()] = now + 10f;
+                    CompanionTelemetry.Event("DesistiuDePegar", _pickTarget.name + " (nao alcancou a tempo)");
+                }
+                else if (!_pickTarget.isActiveAndEnabled)
+                {
+                    CompanionTelemetry.Event("PegouItem", _pickTarget.name);
                 }
                 _pickTarget = null;
                 return false;
@@ -1585,6 +1642,16 @@ namespace RCGCompanion
         private AiInput Finish(AiInput o)
         {
             Trace(o);
+            if (_p2 != null)
+            {
+                bool down = !CompanionPlugin.IsAlive(_p2);
+                if (down && !_p2WasDown)
+                {
+                    CompanionTelemetry.Event("Nocauteada", "ela caiu (vida 0) | ultima intencao antes=" + _intent);
+                }
+                _p2WasDown = down;
+                CompanionTelemetry.Frame(_intent, null, o, _p2, _target, InCombat);
+            }
             bool attacking = o.Quick || o.Heavy || o.Special || o.Block || o.Dodge || o.Interact;
             if (_p2 != null && !attacking && !InCombat && !_airActive && !Nav.Navigating && CompanionPlugin.UsePlatforming.Value && CompanionPlugin.IsAlive(_p2))
             {

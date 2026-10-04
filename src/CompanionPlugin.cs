@@ -51,6 +51,7 @@ namespace RCGCompanion
         internal static ConfigEntry<float> TalkFrequency;
         internal static ConfigEntry<bool> UsePlatforming;
         internal static ConfigEntry<bool> UseAirAttacks;
+        internal static ConfigEntry<bool> ActionLog;
 
         internal static ConfigEntry<bool> VerboseLog;
 
@@ -111,6 +112,8 @@ namespace RCGCompanion
             _deathRespawnInstance = AccessTools.Field(typeof(DeathRespawnManager), "s_instance");
             _playerManagerInstance = AccessTools.Field(typeof(PlayerManager), "s_instance");
 
+            ActionLog = Config.Bind("Debug", "RegistroDeAcoes", true, "Grava todas as acoes dela em BepInEx\\RCG_AICompanion_acoes.log (com resumo de eficiencia a cada 60s). A sessao anterior fica em _anterior.log.");
+            CompanionTelemetry.Begin();
             AttackLearner.Load();
             new Harmony("rcg.aicompanion").PatchAll(typeof(CompanionPlugin).Assembly);
             Log.LogInfo("RCG AI Companion 2.0 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
@@ -119,9 +122,11 @@ namespace RCGCompanion
         private void OnApplicationQuit()
         {
             AttackLearner.Save();
+            CompanionTelemetry.End();
         }
 
         private float _nextLearnerSave;
+        private RCG.Player _lastP1;
 
         private static readonly string[] ModeNames = { "Modo: Normal", "Modo: Agressiva!", "Modo: Defensiva", "Fico aqui!" };
 
@@ -159,6 +164,7 @@ namespace RCGCompanion
                 AiEnabled.Value = !AiEnabled.Value;
                 Brain.Reset();
                 Log.LogInfo("IA " + (AiEnabled.Value ? "LIGADA" : "DESLIGADA"));
+                CompanionTelemetry.Event("IA", AiEnabled.Value ? "ligada (F8)" : "desligada (F8)");
                 PlayerManager pmT = PM;
                 if (pmT != null && pmT.PlayerTwo != null)
                 {
@@ -185,11 +191,23 @@ namespace RCGCompanion
             RCG.Player p1 = pm.PlayerOne;
             RCG.Player p2 = pm.PlayerTwo;
 
+            // Troca de area (o jogo recria os jogadores): fecha um resumo do trecho anterior.
+            if (p1 != null && p1 != _lastP1)
+            {
+                if (_lastP1 != null)
+                {
+                    CompanionTelemetry.Summary("troca de area", false);
+                }
+                _lastP1 = p1;
+                CompanionTelemetry.Event("Area", UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            }
+
             if (ModeKey.Value.IsDown())
             {
                 CompanionMode next = (CompanionMode)(((int)Brain.Mode + 1) % 4);
                 Brain.SetMode(next, p1, p2);
                 Log.LogInfo("Ordem: " + next);
+                CompanionTelemetry.Event("Ordem", next.ToString());
                 if (p2 != null)
                 {
                     _pendingMessages.Clear();
@@ -246,6 +264,7 @@ namespace RCGCompanion
                 {
                     Brain.Reset();
                     Log.LogInfo("Parceira entrou no jogo: " + pm.PlayerTwo.ClassName);
+                    CompanionTelemetry.Event("Entrou", pm.PlayerTwo.ClassName + " entrou no jogo (vida " + Mathf.RoundToInt(pm.PlayerTwo.StaminaPercent * 100f) + "%)");
                 }
             }
             catch (Exception e)
@@ -309,6 +328,7 @@ namespace RCGCompanion
             _healCooldownUntil = Time.time + HealCooldown.Value;
             CompanionSpeech.Say("comer");
             Log.LogInfo(p2.ClassName + " comeu " + used.ItemNameEnglish + " (vida agora " + Mathf.RoundToInt(p2.StaminaPercent * 100f) + "%)");
+            CompanionTelemetry.Event("Curou", used.ItemNameEnglish + " | vida agora " + Mathf.RoundToInt(p2.StaminaPercent * 100f) + "% | " + (inCombat ? "em combate" : "fora de combate"));
         }
 
         private void CheckTeleport(RCG.Player p2, RCG.Player p1)
@@ -352,11 +372,17 @@ namespace RCGCompanion
             float stuckLimit = navigating ? 6f : 3.5f;
             if (_farTimer > farLimit || _stuckTimer > stuckLimit)
             {
-                TeleportNear(p2, p1);
+                string why = _farTimer > farLimit ? "longe demais (dx=" + dx.ToString("0.0") + " dy=" + dy.ToString("0.0") + ")" : "presa sem sair do lugar";
+                TeleportNear(p2, p1, why);
             }
         }
 
         internal void TeleportNear(RCG.Player p2, RCG.Player p1)
+        {
+            TeleportNear(p2, p1, "F9");
+        }
+
+        internal void TeleportNear(RCG.Player p2, RCG.Player p1, string why)
         {
             _farTimer = 0f;
             _stuckTimer = 0f;
@@ -378,6 +404,7 @@ namespace RCGCompanion
                 p2.EntityPhysics.Velocity = Vector3.zero;
             }
             _lastP2Pos = pos;
+            CompanionTelemetry.Event("Teleporte", why);
             if (VerboseLog.Value)
             {
                 Log.LogInfo("Parceira teleportada para perto do jogador.");

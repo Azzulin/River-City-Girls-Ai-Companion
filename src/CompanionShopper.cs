@@ -37,8 +37,10 @@ namespace RCGCompanion
             if (bought.Count == 0)
             {
                 CompanionPlugin.Log.LogInfo(p2.ClassName + " nao comprou nada (dinheiro: $" + Money(c).ToString("0.00") + ").");
+                CompanionTelemetry.Event("Loja", store.StoreName + ": nada comprado, dinheiro $" + Money(c).ToString("0.00"));
                 return bought;
             }
+            CompanionTelemetry.Event("Loja", store.StoreName + ": " + string.Join(", ", bought.ToArray()) + " | sobrou $" + Money(c).ToString("0.00"));
             p2.UpdateFromAttributes();
             PersistentData.Instance.SaveAll();
             CompanionPlugin.Log.LogInfo(p2.ClassName + " comprou: " + string.Join(", ", bought.ToArray()) + " | sobrou $" + Money(c).ToString("0.00"));

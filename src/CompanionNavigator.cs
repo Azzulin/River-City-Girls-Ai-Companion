@@ -211,6 +211,7 @@ namespace RCGCompanion
                 {
                     return false; // sem caminho gravado: deixa o teleporte resolver
                 }
+                CompanionTelemetry.Event("Plataforma", "jogador em outra altura (dy=" + (p1.transform.position.y - me.y).ToString("0.00") + "): refazendo o caminho dele a partir do passo " + _index + " de " + _crumbs.Count);
                 BeginStep(now);
             }
 
@@ -383,6 +384,8 @@ namespace RCGCompanion
         private void Fail(Vector3 me)
         {
             _fails++;
+            Crumb failed = _index >= 0 && _index < _crumbs.Count ? _crumbs[_index] : null;
+            CompanionTelemetry.Event("PlataformaFalhou", "tentativa " + _fails + " | passo=" + (failed != null ? failed.Type.ToString() + (failed.Running ? "(correndo)" : "") + (failed.WallJumpDelay > 0f ? "(paredao)" : "") : "?") + " posicao=" + me.ToString("F2"));
             if (CompanionPlugin.VerboseLog.Value)
             {
                 CompanionPlugin.Log.LogInfo("Plataforma: tentativa falhou (" + _fails + "), recomecando do ponto mais proximo.");
@@ -459,6 +462,7 @@ namespace RCGCompanion
                 o.Jump = true; // segura a mesma direcao e pula por cima
                 _nextHop = now + 1.5f;
                 _noProgressSince = -1f;
+                CompanionTelemetry.Event("Travou", "sem sair do lugar por 0.6s andando: pulando o obstaculo em " + me.ToString("F2"));
                 if (CompanionPlugin.VerboseLog.Value)
                 {
                     CompanionPlugin.Log.LogInfo("Travada num obstaculo: pulando.");

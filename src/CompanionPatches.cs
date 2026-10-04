@@ -219,11 +219,22 @@ namespace RCGCompanion
     [HarmonyPatch(typeof(RCG.Player), "HitSomething")]
     internal static class PlayerHitPatch
     {
-        private static void Postfix(RCG.Player __instance)
+        private static void Prefix(IDamageable victim, out int __state)
+        {
+            CombatEntity v = victim as CombatEntity;
+            __state = v != null ? v.Stamina : -1;
+        }
+
+        private static void Postfix(RCG.Player __instance, IDamageable victim, DamageInfo damageInfo, int __state)
         {
             if (P2.Is(__instance))
             {
                 CompanionPlugin.Brain.OnHitLanded();
+                CombatEntity v = victim as CombatEntity;
+                int diff = v != null && __state >= 0 ? __state - v.Stamina : 0;
+                // Se o jogo ainda nao descontou a vida neste ponto, usa o dano base do golpe.
+                int dmg = diff > 0 ? diff : (damageInfo != null ? damageInfo.DamageAmount : 0);
+                CompanionTelemetry.Hit(__instance, v, dmg);
             }
         }
     }
@@ -232,12 +243,21 @@ namespace RCGCompanion
     [HarmonyPatch(typeof(RCG.Player), "DamageEvent", new Type[] { typeof(DamageInfo) })]
     internal static class PlayerDamagePatch
     {
-        private static void Prefix(RCG.Player __instance, DamageInfo damageInfo)
+        private static void Prefix(RCG.Player __instance, DamageInfo damageInfo, out int __state)
         {
+            __state = __instance.Stamina;
             if (P2.Is(__instance) && damageInfo != null)
             {
                 AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
                 CompanionPlugin.Brain.OnDamaged();
+            }
+        }
+
+        private static void Postfix(RCG.Player __instance, DamageInfo damageInfo, int __state)
+        {
+            if (P2.Is(__instance) && damageInfo != null)
+            {
+                CompanionTelemetry.Damaged(__instance, damageInfo.Attacker, Mathf.Max(0, __state - __instance.Stamina));
             }
         }
     }
@@ -252,6 +272,8 @@ namespace RCGCompanion
             {
                 AttackLearner.OnHitReceived(damageInfo.Attacker as CombatEntity);
                 CompanionPlugin.Brain.OnBlocked();
+                CombatEntity a = damageInfo.Attacker as CombatEntity;
+                CompanionTelemetry.Event("Bloqueou", "golpe de " + (a != null ? a.name : "?") + " defendido");
             }
         }
     }
@@ -264,6 +286,7 @@ namespace RCGCompanion
             if (__result && P2.Is(__instance))
             {
                 CompanionSpeech.Say("parry", 0.8f);
+                CompanionTelemetry.Event("Parry", "parry perfeito!");
                 if (CompanionPlugin.VerboseLog.Value)
                 {
                     CompanionPlugin.Log.LogInfo("Parry!");
@@ -280,6 +303,7 @@ namespace RCGCompanion
             if (P2.Is(__instance))
             {
                 CompanionSpeech.Say("kill", 0.35f);
+                CompanionTelemetry.Event("Derrotou", "inimigo derrotado por ela");
             }
         }
     }
@@ -293,6 +317,7 @@ namespace RCGCompanion
             if (pm != null && pm.PlayerTwo != null && pm.PlayerTwo.ClassNameToPlayerCharacter == _player)
             {
                 CompanionSpeech.Say("nivel");
+                CompanionTelemetry.Event("SubiuNivel", "nivel " + PlayerAttributes.Instance.Players[(int)_player].Level);
                 CompanionPlugin.Log.LogInfo(pm.PlayerTwo.ClassName + " subiu para o nivel " + PlayerAttributes.Instance.Players[(int)_player].Level);
             }
         }
