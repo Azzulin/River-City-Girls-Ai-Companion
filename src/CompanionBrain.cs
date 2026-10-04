@@ -10,6 +10,8 @@ namespace RCGCompanion
     {
         public int H;
         public int V;
+        public bool Jump;
+        public bool JumpRelease;
         public bool Quick;
         public bool Heavy;
         public bool Special;
@@ -103,8 +105,26 @@ namespace RCGCompanion
 
         private readonly List<CombatEntity> _enemies = new List<CombatEntity>();
 
+        // Plataforma e ataques aereos
+        public readonly CompanionNavigator Nav = new CompanionNavigator();
+        private RCG.Player _p2;
+        private bool _airActive;
+        private bool _airJumped;
+        private float _airCreatedAt;
+        private float _airStartedAt;
+        private int _airPresses;
+        private int _airMaxPresses;
+        private float _airNextPress;
+        private int _airDir;
+        private bool _airShortHop;
+        private bool _airEndHeavy;
+        private CombatEntity _airTarget;
+        private float _nextAirDecision;
+
         public void Reset()
         {
+            _airActive = false;
+            Nav.Reset();
             _target = null;
             _comboStep = 0;
             _lastThreat = null;
@@ -182,17 +202,33 @@ namespace RCGCompanion
                 _range = Mathf.Max(CompanionPlugin.AttackRange.Value, MinRange);
             }
 
+            _p2 = p2;
             CalibrateZ(p2);
+            if (CompanionPlugin.UsePlatforming.Value)
+            {
+                Nav.Record(p1);
+            }
 
             if (!CompanionPlugin.IsAlive(p2))
             {
                 InCombat = false;
                 WantsToMove = false;
+                _airActive = false;
                 return Finish(o);
             }
 
             Vector3 anchorPos = Mode == CompanionMode.FicaAqui ? _holdAnchor : (p1 != null ? p1.transform.position : p2.transform.position);
-            CollectEnemies(anchorPos);
+            CollectEnemies(anchorPos, p2.transform.position.y);
+
+            // No meio de um pulo de plataforma ou de um combo aereo: termina o que comecou.
+            if (Nav.Navigating && !p2.IsGrounded && p1 != null && Nav.Drive(p1, p2, ref o, (int)_zSign))
+            {
+                return Finish(o);
+            }
+            if (_airActive && TickAir(p2, now, ref o))
+            {
+                return Finish(o);
+            }
             AttackLearner.Track(_enemies);
             UpdateCombatState(p2, p1, now);
 
@@ -259,7 +295,11 @@ namespace RCGCompanion
                 return Finish(o);
             }
 
-            // 7) Seguir o jogador (ou ficar no lugar).
+            // 7) Seguir o jogador (ou ficar no lugar). Se ele estiver em outra altura, refaz o caminho dele.
+            if (Mode != CompanionMode.FicaAqui && CompanionPlugin.UsePlatforming.Value && p1 != null && Nav.NeedsPath(p1, p2) && Nav.Drive(p1, p2, ref o, (int)_zSign))
+            {
+                return Finish(o);
+            }
             if (Mode == CompanionMode.FicaAqui)
             {
                 MoveTo(p2, _holdAnchor.x, _holdAnchor.z, 0.6f, 0.35f, ref o);
@@ -319,6 +359,10 @@ namespace RCGCompanion
 
         private bool HandleDefense(RCG.Player p2, float now, ref AiInput o)
         {
+            if (!p2.IsGrounded)
+            {
+                return false; // no ar nao da pra defender
+            }
             CombatEntity threat = FindThreat(p2);
             if (threat == null)
             {
@@ -503,9 +547,39 @@ namespace RCGCompanion
             float side = me.x <= t.x ? -1f : 1f;
             float standX = t.x + side * range * 0.85f;
             float zTol = Mathf.Clamp(p2.ZDiffHitTol / 100f, 0.12f, 0.5f) * 0.7f;
+            float dx = Mathf.Abs(t.x - me.x);
+            float adz = Mathf.Abs(t.z - me.z);
+            int toward = t.x >= me.x ? 1 : -1;
+
+            // Ataques aereos.
+            bool canAir = CompanionPlugin.UseAirAttacks.Value && p2.IsGrounded && CanAct(p2) && now >= _nextAirDecision && !p2.IsCarryingHeavyPickupObject();
+            if (canAir)
+            {
+                // Inimigo jogado pro alto: pula e emenda golpes no ar (malabarismo).
+                if (!target.IsGrounded && !target.IsLying && dx < 1.6f && adz < zTol * 1.8f)
+                {
+                    _nextAirDecision = now + 0.4f;
+                    if (Random.value < 0.65f + aggr * 0.25f)
+                    {
+                        StartAir(target, toward, 3, false, Random.value < 0.4f);
+                        TickAir(p2, now, ref o);
+                        return;
+                    }
+                }
+                // Entrada pulando: chega no inimigo com um pulo baixo e chute.
+                else if (dx > range * 1.3f && dx < 2.3f && adz < zTol && !boss)
+                {
+                    _nextAirDecision = now + 0.8f;
+                    if (Random.value < 0.15f + aggr * 0.25f)
+                    {
+                        StartAir(target, toward, 1, true, false);
+                        TickAir(p2, now, ref o);
+                        return;
+                    }
+                }
+            }
 
             bool inPlace = MoveTo(p2, standX, t.z, 0.22f, zTol, ref o);
-            float dx = Mathf.Abs(t.x - me.x);
             bool closeEnough = dx <= range * 1.15f && Mathf.Abs(t.z - me.z) <= zTol * 1.4f;
             if (!inPlace && !closeEnough)
             {
@@ -544,6 +618,15 @@ namespace RCGCompanion
                 return;
             }
 
+            // De vez em quando troca o combo de chao por um combo aereo.
+            if (_comboStep == 0 && CompanionPlugin.UseAirAttacks.Value && !boss && p2.IsGrounded && now >= _nextAirDecision && Random.value < 0.08f + aggr * 0.07f)
+            {
+                _nextAirDecision = now + 1.5f;
+                StartAir(target, toward, 2, false, Random.value < 0.5f);
+                TickAir(p2, now, ref o);
+                return;
+            }
+
             int maxQuick = boss && !vulnerable ? 2 : _quickHits;
             if (_comboStep < maxQuick)
             {
@@ -577,6 +660,91 @@ namespace RCGCompanion
                 }
             }
             RegisterSwing();
+        }
+
+        // ---------------------------------------------------------------- Combo aereo
+
+        private void StartAir(CombatEntity target, int dir, int presses, bool shortHop, bool endHeavy)
+        {
+            _airActive = true;
+            _airJumped = false;
+            _airCreatedAt = Time.time;
+            _airTarget = target;
+            _airDir = dir;
+            _airPresses = 0;
+            _airMaxPresses = presses;
+            _airShortHop = shortHop;
+            _airEndHeavy = endHeavy;
+            _comboStep = 0;
+        }
+
+        private bool TickAir(RCG.Player p2, float now, ref AiInput o)
+        {
+            if (!_airJumped)
+            {
+                if (now - _airCreatedAt > 0.4f)
+                {
+                    _airActive = false;
+                    return false;
+                }
+                if (p2.IsGrounded && CanAct(p2))
+                {
+                    o.Jump = true;
+                    o.H = _airDir;
+                    _airJumped = true;
+                    _airStartedAt = now;
+                    _airNextPress = now + (_airShortHop ? 0.12f : 0.2f);
+                }
+                return true;
+            }
+
+            float t = now - _airStartedAt;
+            if ((t > 0.2f && p2.IsGrounded) || t > 1.6f)
+            {
+                _airActive = false;
+                _pauseUntil = now + 0.15f;
+                return false;
+            }
+
+            // Mira no inimigo enquanto esta no ar.
+            Vector3 me = p2.transform.position;
+            if (_airTarget != null && _airTarget.isActiveAndEnabled)
+            {
+                Vector3 tp = _airTarget.transform.position;
+                float dx = tp.x - me.x;
+                o.H = Mathf.Abs(dx) > 0.35f ? (dx > 0f ? 1 : -1) : 0;
+                float dz = tp.z - me.z;
+                if (Mathf.Abs(dz) > 0.1f)
+                {
+                    o.V = (dz > 0f ? 1 : -1) * (int)_zSign;
+                }
+            }
+            else
+            {
+                o.H = _airDir;
+            }
+
+            if (_airShortHop && t >= 0.06f && t < 0.1f)
+            {
+                o.JumpRelease = true; // pulo baixo
+            }
+
+            if (_airPresses < _airMaxPresses && now >= _airNextPress)
+            {
+                bool last = _airPresses == _airMaxPresses - 1;
+                if (last && _airEndHeavy)
+                {
+                    o.Heavy = true;
+                }
+                else
+                {
+                    o.Quick = true;
+                }
+                _airPresses++;
+                _airNextPress = now + 0.15f;
+                RegisterSwing();
+            }
+            return true;
         }
 
         private void RegisterSwing()
@@ -875,7 +1043,7 @@ namespace RCGCompanion
             return best;
         }
 
-        private void CollectEnemies(Vector3 anchor)
+        private void CollectEnemies(Vector3 anchor, float myY)
         {
             _enemies.Clear();
             CombatEnitityMainManager mgr = CombatEnitityMainManager.GetInstance(false);
@@ -897,7 +1065,13 @@ namespace RCGCompanion
                     continue;
                 }
                 Vector3 ep = e.transform.position;
-                if (Mathf.Abs(ep.x - anchor.x) > leash || Mathf.Abs(ep.y - anchor.y) > 3f)
+                if (Mathf.Abs(ep.x - anchor.x) > leash)
+                {
+                    continue;
+                }
+                // Inimigo em outra plataforma (no chao, longe da altura dela) nao da pra alcancar.
+                float dy = Mathf.Abs(ep.y - myY);
+                if ((e.IsGrounded && dy > 1.0f) || dy > 3.5f)
                 {
                     continue;
                 }
@@ -1045,6 +1219,11 @@ namespace RCGCompanion
 
         private AiInput Finish(AiInput o)
         {
+            bool attacking = o.Quick || o.Heavy || o.Special || o.Block || o.Dodge || o.Interact;
+            if (_p2 != null && !attacking && !InCombat && !_airActive && !Nav.Navigating && CompanionPlugin.UsePlatforming.Value && CompanionPlugin.IsAlive(_p2))
+            {
+                Nav.AntiStuck(_p2, ref o);
+            }
             _lastV = (o.Quick || o.Heavy || o.Special || o.Block || o.Dodge) ? 0 : o.V;
             WantsToMove = o.H != 0 || o.V != 0;
             return o;

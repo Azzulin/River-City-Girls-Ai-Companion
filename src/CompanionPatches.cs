@@ -55,8 +55,8 @@ namespace RCGCompanion
             bool locked = __instance.LockStandardButtonPress;
             SetH(__instance, o.H);
             SetV(__instance, o.V);
-            SetJump(__instance, false);
-            SetJumpRelease(__instance, false);
+            SetJump(__instance, o.Jump && !locked);
+            SetJumpRelease(__instance, o.JumpRelease);
             SetQuick(__instance, o.Quick && !locked);
             __instance.InteractQuick = o.Interact && !locked;
             SetHeavy(__instance, o.Heavy && !locked);

@@ -49,6 +49,8 @@ namespace RCGCompanion
         internal static ConfigEntry<bool> UseRecruits;
         internal static ConfigEntry<bool> Talk;
         internal static ConfigEntry<float> TalkFrequency;
+        internal static ConfigEntry<bool> UsePlatforming;
+        internal static ConfigEntry<bool> UseAirAttacks;
 
         internal static ConfigEntry<bool> VerboseLog;
 
@@ -98,6 +100,8 @@ namespace RCGCompanion
             UseWeapons = Config.Bind("Combate", "UsarArmas", true, "Pega armas do chao e usa.");
             PickupFood = Config.Bind("Cura", "PegarComidaDoChao", true, "Pega comida que os inimigos deixam cair (se voce estiver mais longe dela).");
             UseRecruits = Config.Bind("Combate", "UsarRecrutas", true, "Chama o recruta dela quando tem muitos inimigos ou chefe, e recruta inimigos que ela agarrar.");
+            UsePlatforming = Config.Bind("Movimento", "Plataforma", true, "Grava o caminho do jogador (pulos, pulos na parede, escadas) e refaz quando voce sobe/desce de plataforma. Tambem pula obstaculos quando trava.");
+            UseAirAttacks = Config.Bind("Combate", "AtaquesAereos", true, "Pula para atacar: malabarismo em inimigos no ar, entrada pulando e combos aereos.");
             Talk = Config.Bind("Personalidade", "Falas", true, "Ela comenta o que acontece (texto em cima dela).");
             TalkFrequency = Config.Bind("Personalidade", "FrequenciaDasFalas", 1f, new ConfigDescription("0 = quase nunca, 1 = normal.", new AcceptableValueRange<float>(0f, 1f)));
 
@@ -342,7 +346,11 @@ namespace RCGCompanion
             }
             _lastP2Pos = a;
 
-            if (_farTimer > 2f || _stuckTimer > 2.5f)
+            // Navegando pelas plataformas: da tempo pra ela tentar antes de teleportar.
+            bool navigating = Brain.Nav.Navigating && Brain.Nav.Fails < 3;
+            float farLimit = navigating ? 12f : 2.5f;
+            float stuckLimit = navigating ? 6f : 3.5f;
+            if (_farTimer > farLimit || _stuckTimer > stuckLimit)
             {
                 TeleportNear(p2, p1);
             }
@@ -364,6 +372,7 @@ namespace RCGCompanion
             Vector3 pos = p1.transform.position;
             pos.x -= p1.Facing.FacingSign * 0.9f;
             p2.transform.position = pos;
+            Brain.Nav.Reset();
             if (p2.EntityPhysics != null)
             {
                 p2.EntityPhysics.Velocity = Vector3.zero;
