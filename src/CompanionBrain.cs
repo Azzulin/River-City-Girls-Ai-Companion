@@ -44,6 +44,7 @@ namespace RCGCompanion
         private static readonly string[] BossVulnerable = { "GetHit", "Groggy", "Knockdown", "Lie", "Dazed", "Blownback", "Bounce", "Stun", "Missed", "Collide", "BigBreath", "Taunt", "Wait" };
         private static readonly string[] BossNeutral = { "Idle", "Walk", "Run" };
         private static readonly MethodInfo GetHighestInteract = AccessTools.Method(typeof(InteractableEntityCollider), "GetHighestInteract");
+        private static readonly FieldInfo StayInteractables = AccessTools.Field(typeof(InteractableEntityCollider), "_stayIInteractables");
         private static readonly FieldInfo DropV2Item = AccessTools.Field(typeof(InteractEntity_DropV2), "_item");
         private static readonly FieldInfo LightDropItem = AccessTools.Field(typeof(InteractEntity_LightDrop), "_item");
 
@@ -97,6 +98,7 @@ namespace RCGCompanion
         private MonoBehaviour _pickTarget;
         private float _pickGiveUpAt;
         private float _nextPickScan;
+        private float _nextPickLog;
         private readonly Dictionary<int, float> _pickBlacklist = new Dictionary<int, float>();
 
         private readonly List<CombatEntity> _enemies = new List<CombatEntity>();
@@ -477,6 +479,25 @@ namespace RCGCompanion
                 }
             }
 
+            // Inimigo caido: o golpe no chao do jogo (EnemyLieCondition) so sai com ela praticamente
+            // em cima dele (|dx| <= 0.4, |dz| <= 0.2) e ele sendo o inimigo mais proximo dela.
+            if (target.IsLying && target.CanBeGroundhit && !p2.IsCarryingPickupObject())
+            {
+                if (MoveTo(p2, t.x, t.z, 0.25f, 0.12f, ref o))
+                {
+                    o.H = 0;
+                    o.V = 0;
+                    o.Run = false;
+                    if (now >= _nextPressAt)
+                    {
+                        o.Quick = true;
+                        _nextPressAt = now + Random.Range(0.18f, 0.26f);
+                    }
+                }
+                _comboStep = 0;
+                return;
+            }
+
             float rangeMul = p2.IsCarryingPickupObject() ? 1.35f : 1f;
             float range = _range * rangeMul;
             float side = me.x <= t.x ? -1f : 1f;
@@ -657,17 +678,25 @@ namespace RCGCompanion
                 _pickTarget = null;
                 return false;
             }
-            Vector3 tp = _pickTarget.transform.position;
-            if (MoveTo(p2, tp.x, tp.z, 0.25f, 0.15f, ref o))
+            // Objetos solidos (lixeira etc.) nao deixam ela chegar no centro: basta o objeto entrar
+            // na area de interacao dela. Ai so segura o botao se o jogo for pegar exatamente essa
+            // coisa (ou outra arma), nunca porta/loja/NPC.
+            InteractableEntityCollider col = p2._InteractableEntityCollider;
+            object highest = GetHighestInteract == null || col == null ? null : GetHighestInteract.Invoke(col, null);
+            bool inRange = InInteractList(col, _pickTarget);
+            bool safe = highest != null && (ReferenceEquals(highest, _pickTarget) || (_pickTarget is Weapon && highest is Weapon && !((Weapon)highest).IsQuestItem));
+            if (CompanionPlugin.VerboseLog.Value && now >= _nextPickLog)
             {
-                o.H = 0;
-                // So segura o botao se o objeto que o jogo vai pegar eh exatamente o que ela quer (nunca porta/loja).
-                object highest = GetHighestInteract == null || p2._InteractableEntityCollider == null ? null : GetHighestInteract.Invoke(p2._InteractableEntityCollider, null);
-                if (highest != null && ReferenceEquals(highest, _pickTarget))
-                {
-                    o.Interact = true;
-                }
+                _nextPickLog = now + 1f;
+                CompanionPlugin.Log.LogInfo("Pegar " + _pickTarget.name + ": naArea=" + inRange + " maisProximo=" + (highest == null ? "nada" : ((MonoBehaviour)highest).name));
             }
+            if (inRange && safe)
+            {
+                o.Interact = true;
+                return true;
+            }
+            Vector3 tp = _pickTarget.transform.position;
+            MoveTo(p2, tp.x, tp.z, 0.05f, 0.05f, ref o);
             return true;
         }
 
@@ -727,6 +756,27 @@ namespace RCGCompanion
                 }
             }
             return best;
+        }
+
+        private static bool InInteractList(InteractableEntityCollider col, MonoBehaviour target)
+        {
+            if (col == null || StayInteractables == null)
+            {
+                return false;
+            }
+            System.Collections.IList list = StayInteractables.GetValue(col) as System.Collections.IList;
+            if (list == null)
+            {
+                return false;
+            }
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (ReferenceEquals(list[i], target))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private IEnumerable<InteractEntity> FoodDrops()
@@ -800,7 +850,7 @@ namespace RCGCompanion
                 {
                     score -= Mode == CompanionMode.Defensiva ? 3f : 1.5f; // ajuda quem esta apanhando
                 }
-                if (e.IsLying)
+                if (e.IsLying && !e.CanBeGroundhit)
                 {
                     score += 3f;
                 }
