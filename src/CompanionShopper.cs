@@ -10,14 +10,15 @@ namespace RCGCompanion
         private static readonly string[] AirMoveTriggers = { "Cheer Drill", "Dropkick", "Hurricane Kick", "Half Moon Kick" };
         private static readonly string[] AirMoveNames = { "Air Cheer Drill", "Jump Dropkick", "Jump Half Moon Kick", "Jump Hurricane Kick" };
 
-        public static void Shop(Data_Store store, RCG.Player p2)
+        // Retorna a lista do que ela comprou (vazia se nada).
+        public static List<string> Shop(Data_Store store, RCG.Player p2, bool announce = true)
         {
+            List<string> bought = new List<string>();
             if (store == null || store.Items == null || p2 == null)
             {
-                return;
+                return bought;
             }
             PlayerCharacters c = p2.ClassNameToPlayerCharacter;
-            List<string> bought = new List<string>();
             if (store.StoreType == StoreTypes.Dojo)
             {
                 ShopDojo(store, c, bought);
@@ -36,12 +37,21 @@ namespace RCGCompanion
             if (bought.Count == 0)
             {
                 CompanionPlugin.Log.LogInfo(p2.ClassName + " nao comprou nada (dinheiro: $" + Money(c).ToString("0.00") + ").");
-                return;
+                return bought;
             }
             p2.UpdateFromAttributes();
             PersistentData.Instance.SaveAll();
             CompanionPlugin.Log.LogInfo(p2.ClassName + " comprou: " + string.Join(", ", bought.ToArray()) + " | sobrou $" + Money(c).ToString("0.00"));
-            CompanionPlugin.Say(bought.Count == 1 ? "Comprei " + bought[0] + "!" : "Comprei " + bought.Count + " coisas!");
+            if (announce)
+            {
+                CompanionPlugin.Say(bought.Count == 1 ? "Comprei " + bought[0] + "!" : "Comprei " + bought.Count + " coisas!");
+            }
+            return bought;
+        }
+
+        internal static float MoneyOf(RCG.Player p)
+        {
+            return Money(p.ClassNameToPlayerCharacter);
         }
 
         private static void ShopDojo(Data_Store store, PlayerCharacters c, List<string> bought)
@@ -152,11 +162,40 @@ namespace RCGCompanion
                 }
             }
 
-            // 3) Comidas para carregar e se curar depois.
+            // 2b) Se esta machucada, come na hora ate ficar quase cheia (a comida mais barata que resolve).
+            int healGuard = 0;
+            while (p2.StaminaPercent < 0.95f && healGuard++ < 6)
+            {
+                float missing = (1f - p2.StaminaPercent) * 100f;
+                Data_InventoryItem pick = null;
+                float pickScore = float.MaxValue;
+                foreach (Data_InventoryItem f in foods)
+                {
+                    if (f.StaminaRegen <= 0 || Money(c) - f.ItemPrice < reserve)
+                    {
+                        continue;
+                    }
+                    float score = f.StaminaRegen >= missing ? f.ItemPrice : 10000f - f.StaminaRegen;
+                    if (score < pickScore)
+                    {
+                        pickScore = score;
+                        pick = f;
+                    }
+                }
+                if (pick == null || !Pay(c, pick.ItemPrice, reserve))
+                {
+                    break;
+                }
+                Helper_ApplyItemToPlayer.ApplyItemToPlayer(c, pick);
+                AddSeen(pick);
+                bought.Add(pick.ItemNameEnglish + " (comeu pra curar)");
+            }
+
+            // 3) Comidas para carregar e se curar depois (enche os espacos livres da mochila).
             PlayerInventory useables = PlayerGlobalInventory.instance.PlayerInventories[(int)c].UseablesInventory;
             int want = CompanionPlugin.CarryHealItems.Value;
             int guard = 0;
-            while (CountHealItems(useables) < want && guard++ < 10)
+            while (CountHealItems(useables) < want && guard++ < 12)
             {
                 Data_InventoryItem best = null;
                 float bestValue = 0f;

@@ -92,7 +92,7 @@ namespace RCGCompanion
 
             ShopEnabled = Config.Bind("Loja", "FazerCompras", true, "Quando voce sai de uma loja/dojo, ela faz as compras dela.");
             MoneyReserve = Config.Bind("Loja", "DinheiroReserva", 10f, "Quanto dinheiro ela tenta guardar (exceto para golpes do dojo).");
-            CarryHealItems = Config.Bind("Loja", "ComidasNaMochila", 2, "Quantas comidas de cura ela tenta carregar.");
+            CarryHealItems = Config.Bind("Loja", "MaxComidasNaMochila", 6, "Quantas comidas de cura ela tenta carregar (limitado pelos espacos da mochila dela).");
             BuyAccessories = Config.Bind("Loja", "ComprarAcessorios", true, "Compra acessorios e equipa sempre os 2 mais uteis que ela tiver.");
 
             ModeKey = Config.Bind("Geral", "TeclaOrdens", new KeyboardShortcut(KeyCode.F10), "Troca a ordem da parceira: Normal > Agressiva > Defensiva > Fica aqui.");

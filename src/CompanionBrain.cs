@@ -73,7 +73,16 @@ namespace RCGCompanion
         private float _retreatUntil;
         private float _range = -1f;
         private int _missStreak;
-        private int _groundPress;
+        private int _groundPress = 2; // o log mostrou que o ataque forte acerta inimigo caido
+        private int _revivePress;
+        private float _side = -1f;
+        private CombatEntity _sideTarget;
+        private float _sideLockedUntil;
+        private float _escapeUntil;
+        private float _escapeCooldownUntil;
+        private float _escapeZ;
+        private int _reviveCredited = -1;
+        private float _lastRevivePressAt = -10f;
         private int _groundCredited = -1;
         private float _carryIdleSince = -1f;
 
@@ -254,15 +263,7 @@ namespace RCGCompanion
             _p1WasDown = p1Down;
             if (p1Down)
             {
-                float side = p2.transform.position.x < p1.transform.position.x ? -1f : 1f;
-                if (MoveTo(p2, p1.transform.position.x + side * 0.25f, p1.transform.position.z, 0.12f, 0.1f, ref o))
-                {
-                    if (!FaceTowards(p2, p1.transform.position.x, ref o) && now >= _nextRevivePress)
-                    {
-                        o.Quick = true;
-                        _nextRevivePress = now + 0.22f;
-                    }
-                }
+                Revive(p2, p1, now, ref o);
                 return Finish(o);
             }
 
@@ -386,6 +387,57 @@ namespace RCGCompanion
                     CompanionSpeech.Say("parado", 0.6f);
                 }
             }
+        }
+
+        // ---------------------------------------------------------------- Reviver
+
+        // Nos dados do jogo, a condicao de reviver (NextToDyingPlayerCondition) aceita ate 1.0 na
+        // horizontal e 0.5 na profundidade; o golpe ainda precisa estar na faixa de Z do acerto.
+        // Fica AO LADO (nao em cima, senao esbarra no corpo), virada, e descobre qual botao funciona.
+        private void Revive(RCG.Player p2, RCG.Player p1, float now, ref AiInput o)
+        {
+            Vector3 me = p2.transform.position;
+            Vector3 pp = p1.transform.position;
+
+            // Detecta se o ultimo golpe acertou (o jogo coloca o caido no estado de "apanhar" deitado).
+            string p1State = p1.Fsm.GetCurrentState() ?? string.Empty;
+            if (p1State.EndsWith("PlayerDeathLie_GetHit") && now - _lastRevivePressAt < 0.6f && _reviveCredited != _revivePress)
+            {
+                _revivePress--; // funcionou: repete o mesmo botao
+                _reviveCredited = _revivePress;
+                if (CompanionPlugin.VerboseLog.Value)
+                {
+                    CompanionPlugin.Log.LogInfo("Reviver: acertou com o botao " + (_revivePress % 3));
+                }
+            }
+
+            float side = me.x <= pp.x ? -1f : 1f;
+            bool placed = MoveTo(p2, pp.x + side * 0.5f, pp.z, 0.22f, 0.1f, ref o);
+            bool close = Mathf.Abs(pp.x - me.x) <= 0.85f && Mathf.Abs(pp.z - me.z) <= 0.16f;
+            if (!placed && !close)
+            {
+                return;
+            }
+            o.H = 0;
+            o.V = 0;
+            o.Run = false;
+            if (FaceTowards(p2, pp.x, ref o) || now < _nextRevivePress || !CanAct(p2))
+            {
+                return;
+            }
+            switch (_revivePress % 3)
+            {
+                case 0: o.Heavy = true; break;
+                case 1: o.Quick = true; break;
+                default: o.Quick = true; o.V = -1; break;
+            }
+            if (CompanionPlugin.VerboseLog.Value)
+            {
+                CompanionPlugin.Log.LogInfo("Reviver: botao " + (_revivePress % 3) + " dx=" + (pp.x - me.x).ToString("0.00") + " dz=" + (pp.z - me.z).ToString("0.00"));
+            }
+            _revivePress++;
+            _lastRevivePressAt = now;
+            _nextRevivePress = now + 0.3f;
         }
 
         // ---------------------------------------------------------------- Defesa
@@ -629,11 +681,35 @@ namespace RCGCompanion
                 return;
             }
 
+            // Cercada (inimigo dos dois lados): esquiva pra fora da linha e se reposiciona.
+            if (HandleSurrounded(p2, now, ref o))
+            {
+                return;
+            }
+
             float rangeMul = p2.IsCarryingPickupObject() ? 1.35f : 1f;
             float range = _range * rangeMul;
-            float side = me.x <= t.x ? -1f : 1f;
+            float side = ChooseSide(p2, p1, target, range, now);
             float standX = t.x + side * range * 0.85f;
             float zTol = Mathf.Clamp(p2.ZDiffHitTol / 100f, 0.12f, 0.5f) * 0.7f;
+            bool stunned = ContainsAny(target.Fsm.GetCurrentState() ?? string.Empty, BossVulnerable);
+
+            // Precisa trocar de lado: contorna o inimigo por fora da linha dele (nao atravessa).
+            if (Mathf.Sign(me.x - t.x) != side && Mathf.Abs(me.x - t.x) < 2.2f)
+            {
+                float zOut = t.z + (me.z >= t.z ? 0.8f : -0.8f);
+                MoveTo(p2, standX, zOut, 0.25f, 0.15f, ref o);
+                return;
+            }
+
+            // Espacamento: entre um combo e outro recua um pouco (exceto se ele estiver atordoado).
+            if (now < _pauseUntil && !stunned && _comboStep == 0)
+            {
+                float back = Mode == CompanionMode.Defensiva ? 1.9f : Mathf.Lerp(1.6f, 1.05f, Aggressiveness);
+                MoveTo(p2, t.x + side * range * back, t.z, 0.25f, 0.3f, ref o);
+                FaceTowards(p2, t.x, ref o);
+                return;
+            }
             float dx = Mathf.Abs(t.x - me.x);
             float adz = Mathf.Abs(t.z - me.z);
             int toward = t.x >= me.x ? 1 : -1;
@@ -747,6 +823,125 @@ namespace RCGCompanion
                 }
             }
             RegisterSwing();
+        }
+
+        // ---------------------------------------------------------------- Posicionamento
+
+        // Escolhe de que lado do inimigo atacar: perto dela, longe de outros inimigos e,
+        // se possivel, do lado oposto ao jogador (pinca: o inimigo fica entre as duas).
+        private float ChooseSide(RCG.Player p2, RCG.Player p1, CombatEntity target, float range, float now)
+        {
+            if (target == _sideTarget && now < _sideLockedUntil)
+            {
+                return _side;
+            }
+            Vector3 me = p2.transform.position;
+            Vector3 t = target.transform.position;
+            float best = me.x <= t.x ? -1f : 1f;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < 2; i++)
+            {
+                float s = i == 0 ? -1f : 1f;
+                Vector3 spot = new Vector3(t.x + s * range * 0.85f, t.y, t.z);
+                float score = Mathf.Abs(spot.x - me.x) + Mathf.Abs(spot.z - me.z) * 1.5f;
+                if (Mathf.Sign(me.x - t.x) != s && Mathf.Abs(me.x - t.x) < 2.2f)
+                {
+                    score += 1.2f; // teria que contornar
+                }
+                score += 1.8f * EnemiesNear(spot, 1.3f, target);
+                if (p1 != null && p1.isActiveAndEnabled && p1.Stamina > 0)
+                {
+                    Vector3 pp = p1.transform.position;
+                    if (Mathf.Abs(pp.x - t.x) < 2.5f && Mathf.Abs(pp.z - t.z) < 0.8f && Mathf.Sign(pp.x - t.x) == s)
+                    {
+                        score += 2.0f; // o jogador ja esta desse lado
+                    }
+                }
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = s;
+                }
+            }
+            _side = best;
+            _sideTarget = target;
+            _sideLockedUntil = now + 1.5f;
+            return best;
+        }
+
+        private bool HandleSurrounded(RCG.Player p2, float now, ref AiInput o)
+        {
+            Vector3 me = p2.transform.position;
+            if (now < _escapeUntil)
+            {
+                MoveTo(p2, me.x, _escapeZ, 5f, 0.15f, ref o);
+                return true;
+            }
+            if (now < _escapeCooldownUntil || !CanAct(p2))
+            {
+                return false;
+            }
+            int left = 0;
+            int right = 0;
+            float zSum = 0f;
+            for (int i = 0; i < _enemies.Count; i++)
+            {
+                CombatEntity e = _enemies[i];
+                if (e.IsLying)
+                {
+                    continue;
+                }
+                Vector3 ep = e.transform.position;
+                float dx = ep.x - me.x;
+                if (Mathf.Abs(dx) < 1.6f && Mathf.Abs(ep.z - me.z) < 0.6f)
+                {
+                    if (dx < 0f)
+                    {
+                        left++;
+                    }
+                    else
+                    {
+                        right++;
+                    }
+                    zSum += ep.z;
+                }
+            }
+            if (left == 0 || right == 0)
+            {
+                return false;
+            }
+            // Foge na profundidade para o lado com menos inimigos e usa a esquiva (que tem invencibilidade).
+            float avgZ = zSum / (left + right);
+            int dir = me.z >= avgZ ? 1 : -1;
+            _escapeZ = me.z + dir * 1.0f;
+            _escapeUntil = now + 0.7f;
+            _escapeCooldownUntil = now + 2.5f;
+            o.Dodge = true;
+            o.V = dir * (int)_zSign;
+            if (CompanionPlugin.VerboseLog.Value)
+            {
+                CompanionPlugin.Log.LogInfo("Cercada (" + left + " x " + right + "): saindo da linha.");
+            }
+            return true;
+        }
+
+        private int EnemiesNear(Vector3 pos, float radius, CombatEntity except)
+        {
+            int n = 0;
+            for (int i = 0; i < _enemies.Count; i++)
+            {
+                CombatEntity e = _enemies[i];
+                if (e == except || e.IsLying)
+                {
+                    continue;
+                }
+                Vector3 ep = e.transform.position;
+                if (Mathf.Abs(ep.x - pos.x) <= radius && Mathf.Abs(ep.z - pos.z) <= 0.7f)
+                {
+                    n++;
+                }
+            }
+            return n;
         }
 
         // ---------------------------------------------------------------- Combo aereo
@@ -1110,6 +1305,8 @@ namespace RCGCompanion
                 {
                     score += 3f;
                 }
+                // Prefere inimigos na borda do grupo a se enfiar no meio da multidao.
+                score += 0.8f * EnemiesNear(ep, 1.3f, e);
                 if (score < bestScore)
                 {
                     bestScore = score;

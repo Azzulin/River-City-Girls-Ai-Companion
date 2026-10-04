@@ -1,5 +1,8 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
+using TMPro;
 using HarmonyLib;
 using RCG;
 using UnityEngine;
@@ -71,12 +74,15 @@ namespace RCGCompanion
         }
     }
 
-    // Quando voce sai da loja, em vez de passar a vez pro controle 2, a parceira faz as compras dela.
+    // Quando voce sai da loja, o jogo passa a vez pro Player 2 (tela com o nome e a carteira dela).
+    // A parceira usa essa vez de verdade: compra item por item (com efeito e dinheiro descendo) e sai.
     [HarmonyPatch(typeof(UI_StoreScreenV2), "LeaveStore")]
     internal static class StoreLeavePatch
     {
         private static readonly FieldInfo TargetPlayer = AccessTools.Field(typeof(UI_StoreScreenV2), "_targetPlayerInput");
         private static readonly FieldInfo PlayerCount = AccessTools.Field(typeof(UI_StoreScreenV2), "_playerCount");
+        private static readonly FieldInfo InStore = AccessTools.Field(typeof(UI_StoreScreenV2), "_inStore");
+        private static readonly FieldInfo MoneyText = AccessTools.Field(typeof(UI_StoreScreenV2), "_playerMoneyText");
 
         private static void Prefix(UI_StoreScreenV2 __instance)
         {
@@ -93,6 +99,13 @@ namespace RCGCompanion
             {
                 return;
             }
+            bool getsTurn = GlobalSettings.instance != null && !GlobalSettings.instance.SinglePlayer && pm.BothPlayersAlive() && CompanionPlugin.Instance != null;
+            if (getsTurn)
+            {
+                // Deixa o jogo passar a vez pra ela; a corrotina faz as compras quando a tela dela abrir.
+                CompanionPlugin.Instance.StartCoroutine(StoreTurn(__instance, pm.PlayerTwo));
+                return;
+            }
             try
             {
                 CompanionShopper.Shop(__instance.StoreDisplayData, pm.PlayerTwo);
@@ -101,8 +114,61 @@ namespace RCGCompanion
             {
                 CompanionPlugin.Log.LogError("Erro nas compras da IA: " + e);
             }
-            // Pula a vez do Player 2 na loja: o jogo fecha a loja normalmente.
             PlayerCount.SetValue(__instance, 1);
+        }
+
+        private static IEnumerator StoreTurn(UI_StoreScreenV2 store, RCG.Player p2)
+        {
+            float t0 = Time.realtimeSinceStartup;
+            while (Time.realtimeSinceStartup - t0 < 6f && !((bool)InStore.GetValue(store) && store.CurrentPlayerInput == 1))
+            {
+                yield return null;
+            }
+            yield return new WaitForSecondsRealtime(0.8f);
+
+            float before = CompanionShopper.MoneyOf(p2);
+            List<string> bought = null;
+            try
+            {
+                bought = CompanionShopper.Shop(store.StoreDisplayData, p2, false);
+            }
+            catch (Exception e)
+            {
+                CompanionPlugin.Log.LogError("Erro nas compras da IA: " + e);
+            }
+            if (bought == null)
+            {
+                bought = new List<string>();
+            }
+            float after = CompanionShopper.MoneyOf(p2);
+            TMP_Text money = MoneyText.GetValue(store) as TMP_Text;
+            for (int i = 0; i < bought.Count; i++)
+            {
+                if (money != null)
+                {
+                    money.text = "$" + Mathf.Lerp(before, after, (i + 1f) / bought.Count).ToString("0.00");
+                }
+                store.PlayMoneyBuyVFX();
+                if (i == 0 && store.StoreDisplayData != null)
+                {
+                    RCGAudio.instance.PlayOneShot(store.StoreDisplayData.VOOnPurchase);
+                }
+                yield return new WaitForSecondsRealtime(0.45f);
+            }
+            store.UpdateStoreDisplay();
+            yield return new WaitForSecondsRealtime(bought.Count == 0 ? 1.2f : 0.9f);
+            if (store.CurrentPlayerInput == 1)
+            {
+                store.LeaveStore();
+            }
+            if (bought.Count > 0)
+            {
+                CompanionPlugin.Say(bought.Count == 1 ? "Comprei " + bought[0] + "!" : "Comprei " + bought.Count + " coisas!");
+            }
+            else
+            {
+                CompanionPlugin.Say("Nada pra mim aqui!");
+            }
         }
     }
 
