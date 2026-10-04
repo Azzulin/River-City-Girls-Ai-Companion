@@ -1,0 +1,22 @@
+# Arquivos gerados pela compilacao
+bin/
+
+# Pacotes para testers (gerados a partir do codigo + BepInEx)
+dist/
+
+# Copias manuais de versoes antigas (o historico agora e o proprio git: veja as tags)
+versoes/
+
+# Backups de save do jogo (pessoais)
+backup_saves/
+
+# Nunca versionar arquivos do jogo nem codigo decompilado do jogo
+*.dll
+*.sav
+decompilado/
+
+# Lixo do Windows / editores
+Thumbs.db
+desktop.ini
+*.user
+.vs/
