@@ -83,9 +83,24 @@ namespace RCGCompanion
             }
         }
 
+        // Inimigo atordoado/apanhando as vezes "pisca" no estado de ataque por 1 frame (a IA dele tenta
+        // atacar e o jogo devolve pro atordoamento). Isso NAO e golpe: so conta ataque estavel.
         public static bool TryGetAttackStart(CombatEntity e, out float start)
         {
-            return AttackStart.TryGetValue(e, out start);
+            if (!AttackStart.TryGetValue(e, out start))
+            {
+                return false;
+            }
+            if (Time.time - start < 0.05f || IsIncapacitated(e))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        public static bool IsIncapacitated(CombatEntity e)
+        {
+            return e.IsGroggy || e.IsGettingHit || e.IsLying || e.InKnockdown || e.IsDead;
         }
 
         // So devolve o tempo se ele for confiavel (2+ amostras e pouca variacao).
@@ -115,7 +130,7 @@ namespace RCGCompanion
                 return;
             }
             float start;
-            if (!AttackStart.TryGetValue(attacker, out start))
+            if (!AttackStart.TryGetValue(attacker, out start) || Time.time - start < 0.05f)
             {
                 return;
             }

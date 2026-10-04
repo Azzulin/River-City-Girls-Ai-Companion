@@ -75,6 +75,17 @@ namespace RCGCompanion
         private int _missStreak;
         private int _groundPress = 2; // o log mostrou que o ataque forte acerta inimigo caido
         private int _revivePress;
+        private float _defenseReadyAt;
+        private readonly int[] _groundHits = new int[4];
+        private int _groundLocked = -1;
+        private readonly int[] _reviveHits = new int[3];
+        private int _reviveLocked = -1;
+
+        // Diagnostico: guarda as ultimas trocas de estado dela para achar comportamentos "piscando".
+        private readonly List<string> _trace = new List<string>();
+        private readonly List<float> _traceTimes = new List<float>();
+        private string _traceLastState = string.Empty;
+        private float _nextTraceDump;
         private float _side = -1f;
         private CombatEntity _sideTarget;
         private float _sideLockedUntil;
@@ -202,6 +213,12 @@ namespace RCGCompanion
             {
                 _groundPress--; // acertou no chao: repete o mesmo botao
                 _groundCredited = _groundPress;
+                int b = _groundPress % 4;
+                _groundHits[b]++;
+                if (_groundHits[b] >= 2)
+                {
+                    _groundLocked = b;
+                }
                 if (CompanionPlugin.VerboseLog.Value)
                 {
                     CompanionPlugin.Log.LogInfo("Acertou inimigo no chao com o botao " + (_groundPress % 4));
@@ -405,6 +422,12 @@ namespace RCGCompanion
             {
                 _revivePress--; // funcionou: repete o mesmo botao
                 _reviveCredited = _revivePress;
+                int rb = _revivePress % 3;
+                _reviveHits[rb]++;
+                if (_reviveHits[rb] >= 2)
+                {
+                    _reviveLocked = rb;
+                }
                 if (CompanionPlugin.VerboseLog.Value)
                 {
                     CompanionPlugin.Log.LogInfo("Reviver: acertou com o botao " + (_revivePress % 3));
@@ -424,6 +447,10 @@ namespace RCGCompanion
             if (FaceTowards(p2, pp.x, ref o) || now < _nextRevivePress || !CanAct(p2))
             {
                 return;
+            }
+            if (_reviveLocked >= 0)
+            {
+                _revivePress = _reviveLocked;
             }
             switch (_revivePress % 3)
             {
@@ -457,9 +484,16 @@ namespace RCGCompanion
                     return true;
                 }
                 _blockUntil = 0f;
+                _defenseReadyAt = now + 0.5f;
                 _pauseUntil = 0f;      // contra-ataque imediato
                 _nextPressAt = now;
                 _comboStep = 0;
+            }
+
+            // Depois de uma defesa/esquiva, um respiro antes de decidir outra (evita "piscar" a defesa).
+            if (now < _defenseReadyAt)
+            {
+                return false;
             }
 
             float start;
@@ -475,6 +509,10 @@ namespace RCGCompanion
                 _lastThreat = threat;
                 _lastThreatStart = start;
                 _defense = ChooseDefense(threat, now);
+                if (CompanionPlugin.VerboseLog.Value && _defense != Defense.None)
+                {
+                    CompanionPlugin.Log.LogInfo("Defesa: " + _defense + " contra " + threat.name + " (" + threat.Fsm.GetCurrentState() + ", golpe ha " + (now - start).ToString("0.00") + "s)");
+                }
             }
             if (_defense == Defense.None)
             {
@@ -492,6 +530,7 @@ namespace RCGCompanion
                 o.Dodge = true;
                 o.V = dir * (int)_zSign;
                 _dodgeCooldownUntil = now + 1.2f;
+                _defenseReadyAt = now + 0.5f;
                 _defense = Defense.None;
                 CompanionSpeech.Say("esquiva", 0.3f);
                 return true;
@@ -662,6 +701,10 @@ namespace RCGCompanion
                     if (!FaceTowards(p2, t.x, ref o) && now >= _nextPressAt)
                     {
                         // Nao da pra saber pelos dados qual botao o combo usa: alterna ate acertar.
+                        if (_groundLocked >= 0)
+                        {
+                            _groundPress = _groundLocked; // ja sabe qual botao funciona
+                        }
                         switch (_groundPress % 4)
                         {
                             case 2: o.Heavy = true; break;
@@ -1502,8 +1545,46 @@ namespace RCGCompanion
             _lastZ = z;
         }
 
+        private void Trace(AiInput o)
+        {
+            if (_p2 == null || !CompanionPlugin.VerboseLog.Value)
+            {
+                return;
+            }
+            float now = Time.time;
+            string s = _p2.Fsm.GetCurrentState() ?? string.Empty;
+            if (s == _traceLastState)
+            {
+                return;
+            }
+            _traceLastState = s;
+            string flags = (o.Block ? "B" : "") + (o.Quick ? "Q" : "") + (o.Heavy ? "H" : "") + (o.Dodge ? "D" : "") + (o.Jump ? "J" : "") + (o.Interact ? "I" : "") + (o.Recruit ? "R" : "");
+            string tgt = _target != null ? _target.name + "/" + (_target.Fsm.GetCurrentState() ?? "") : "-";
+            _trace.Add(now.ToString("0.00") + " " + s.Replace("RCG.", "") + " [" + flags + " h" + o.H + " v" + o.V + "] alvo=" + tgt.Replace("RCG.", ""));
+            _traceTimes.Add(now);
+            while (_trace.Count > 16)
+            {
+                _trace.RemoveAt(0);
+                _traceTimes.RemoveAt(0);
+            }
+            int recent = 0;
+            for (int i = 0; i < _traceTimes.Count; i++)
+            {
+                if (now - _traceTimes[i] <= 1f)
+                {
+                    recent++;
+                }
+            }
+            if (recent > 10 && now >= _nextTraceDump)
+            {
+                _nextTraceDump = now + 5f;
+                CompanionPlugin.Log.LogWarning("Trocas de estado rapidas demais (" + recent + " em 1s):\n  " + string.Join("\n  ", _trace.ToArray()));
+            }
+        }
+
         private AiInput Finish(AiInput o)
         {
+            Trace(o);
             bool attacking = o.Quick || o.Heavy || o.Special || o.Block || o.Dodge || o.Interact;
             if (_p2 != null && !attacking && !InCombat && !_airActive && !Nav.Navigating && CompanionPlugin.UsePlatforming.Value && CompanionPlugin.IsAlive(_p2))
             {
