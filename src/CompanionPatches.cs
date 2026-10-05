@@ -84,9 +84,14 @@ namespace RCGCompanion
         private static readonly FieldInfo InStore = AccessTools.Field(typeof(UI_StoreScreenV2), "_inStore");
         private static readonly FieldInfo MoneyText = AccessTools.Field(typeof(UI_StoreScreenV2), "_playerMoneyText");
 
+        // Estado da vez dela (lido pelo vigia no CompanionPlugin).
+        internal static bool TurnActive;
+        internal static float TurnStartedAt = -1f;
+
         private static void Prefix(UI_StoreScreenV2 __instance)
         {
-            if (!CompanionPlugin.IsActive || !CompanionPlugin.ShopEnabled.Value)
+            // IA desligada (F8): comportamento normal do jogo (um amigo pode usar o controle 2).
+            if (!CompanionPlugin.IsActive)
             {
                 return;
             }
@@ -95,79 +100,174 @@ namespace RCGCompanion
                 return;
             }
             PlayerManager pm = CompanionPlugin.PM;
-            if (pm == null || pm.PlayerTwo == null || !CompanionPlugin.IsAlive(pm.PlayerTwo))
+            if (pm == null || pm.PlayerTwo == null)
             {
-                return;
+                return; // sem Player 2: o jogo fecha a loja normalmente
             }
-            bool getsTurn = GlobalSettings.instance != null && !GlobalSettings.instance.SinglePlayer && pm.BothPlayersAlive() && CompanionPlugin.Instance != null;
-            if (getsTurn)
+            RCG.Player p2 = pm.PlayerTwo;
+            bool gameGivesTurn = GlobalSettings.instance != null && !GlobalSettings.instance.SinglePlayer && pm.BothPlayersAlive();
+            bool canShop = CompanionPlugin.ShopEnabled.Value && CompanionPlugin.IsAlive(p2) && CompanionPlugin.Instance != null;
+
+            if (gameGivesTurn && canShop)
             {
                 // Deixa o jogo passar a vez pra ela; a corrotina faz as compras quando a tela dela abrir.
-                CompanionPlugin.Instance.StartCoroutine(StoreTurn(__instance, pm.PlayerTwo));
+                TurnActive = true;
+                TurnStartedAt = Time.realtimeSinceStartup;
+                CompanionTelemetry.Event("LojaVez", "vez dela comecou (" + SafeStoreName(__instance) + ")");
+                CompanionPlugin.Instance.StartCoroutine(StoreTurn(__instance, p2));
                 return;
             }
-            try
+
+            // Qualquer outro caso: NUNCA deixa a vez do Player 2 para um controle que nao existe.
+            if (canShop)
             {
-                CompanionShopper.Shop(__instance.StoreDisplayData, pm.PlayerTwo);
-            }
-            catch (Exception e)
-            {
-                CompanionPlugin.Log.LogError("Erro nas compras da IA: " + e);
+                SafeShop(__instance, p2, true);
             }
             PlayerCount.SetValue(__instance, 1);
+            CompanionTelemetry.Event("LojaVez", "vez dela pulada (" + (!CompanionPlugin.ShopEnabled.Value ? "compras desligadas" : !CompanionPlugin.IsAlive(p2) ? "ela esta caida" : "jogo nao daria a vez") + ")");
         }
 
+        // Toda a vez dela fica dentro de try/finally: se QUALQUER coisa der erro no meio,
+        // o finally fecha a loja mesmo assim (antes, um erro deixava o jogador preso).
         private static IEnumerator StoreTurn(UI_StoreScreenV2 store, RCG.Player p2)
         {
-            float t0 = Time.realtimeSinceStartup;
-            while (Time.realtimeSinceStartup - t0 < 6f && !((bool)InStore.GetValue(store) && store.CurrentPlayerInput == 1))
-            {
-                yield return null;
-            }
-            yield return new WaitForSecondsRealtime(0.8f);
-
-            float before = CompanionShopper.MoneyOf(p2);
-            List<string> bought = null;
             try
             {
-                bought = CompanionShopper.Shop(store.StoreDisplayData, p2, false);
+                float t0 = Time.realtimeSinceStartup;
+                while (Time.realtimeSinceStartup - t0 < 6f && !SafeIsP2Ready(store))
+                {
+                    yield return null;
+                }
+                if (!SafeIsP2Ready(store))
+                {
+                    CompanionTelemetry.Event("LojaVez", "tela dela nao abriu direito em 6s (ex.: dojo sem golpes pra ela); comprando e saindo assim mesmo");
+                }
+                yield return new WaitForSecondsRealtime(0.8f);
+
+                float before = SafeMoney(p2);
+                List<string> bought = SafeShop(store, p2, false);
+                float after = SafeMoney(p2);
+                for (int i = 0; i < bought.Count; i++)
+                {
+                    SafeBuyEffect(store, Mathf.Lerp(before, after, (i + 1f) / bought.Count), i == 0);
+                    yield return new WaitForSecondsRealtime(0.45f);
+                }
+                SafeUpdateDisplay(store);
+                yield return new WaitForSecondsRealtime(bought.Count == 0 ? 1.2f : 0.9f);
+
+                ForceLeave(store, "fim normal da vez dela");
+                CompanionPlugin.Say(bought.Count == 0 ? "Nada pra mim aqui!" : bought.Count == 1 ? "Comprei " + bought[0] + "!" : "Comprei " + bought.Count + " coisas!");
+            }
+            finally
+            {
+                if (TurnActive)
+                {
+                    ForceLeave(store, "erro durante a vez dela");
+                }
+            }
+        }
+
+        // Sai da vez dela na loja (a loja fecha). Seguro para chamar mais de uma vez.
+        internal static void ForceLeave(UI_StoreScreenV2 store, string reason)
+        {
+            TurnActive = false;
+            TurnStartedAt = -1f;
+            try
+            {
+                if (store != null && store.CurrentPlayerInput == 1)
+                {
+                    store.LeaveStore();
+                    CompanionTelemetry.Event("LojaVez", "saiu da loja: " + reason);
+                }
+            }
+            catch (Exception e)
+            {
+                CompanionPlugin.Log.LogError("Erro ao sair da loja (" + reason + "): " + e);
+                CompanionTelemetry.Event("LojaErro", "erro ao sair: " + e.Message);
+            }
+        }
+
+        private static bool SafeIsP2Ready(UI_StoreScreenV2 store)
+        {
+            try
+            {
+                return (bool)InStore.GetValue(store) && store.CurrentPlayerInput == 1;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static List<string> SafeShop(UI_StoreScreenV2 store, RCG.Player p2, bool announce)
+        {
+            try
+            {
+                List<string> b = CompanionShopper.Shop(store.StoreDisplayData, p2, announce);
+                return b ?? new List<string>();
             }
             catch (Exception e)
             {
                 CompanionPlugin.Log.LogError("Erro nas compras da IA: " + e);
+                CompanionTelemetry.Event("LojaErro", "erro nas compras: " + e.Message);
+                return new List<string>();
             }
-            if (bought == null)
+        }
+
+        private static float SafeMoney(RCG.Player p2)
+        {
+            try
             {
-                bought = new List<string>();
+                return CompanionShopper.MoneyOf(p2);
             }
-            float after = CompanionShopper.MoneyOf(p2);
-            TMP_Text money = MoneyText.GetValue(store) as TMP_Text;
-            for (int i = 0; i < bought.Count; i++)
+            catch
             {
-                if (money != null)
+                return 0f;
+            }
+        }
+
+        private static void SafeBuyEffect(UI_StoreScreenV2 store, float money, bool withVoice)
+        {
+            try
+            {
+                TMP_Text text = MoneyText.GetValue(store) as TMP_Text;
+                if (text != null)
                 {
-                    money.text = "$" + Mathf.Lerp(before, after, (i + 1f) / bought.Count).ToString("0.00");
+                    text.text = "$" + money.ToString("0.00");
                 }
                 store.PlayMoneyBuyVFX();
-                if (i == 0 && store.StoreDisplayData != null)
+                if (withVoice && store.StoreDisplayData != null)
                 {
                     RCGAudio.instance.PlayOneShot(store.StoreDisplayData.VOOnPurchase);
                 }
-                yield return new WaitForSecondsRealtime(0.45f);
             }
-            store.UpdateStoreDisplay();
-            yield return new WaitForSecondsRealtime(bought.Count == 0 ? 1.2f : 0.9f);
-            if (store.CurrentPlayerInput == 1)
+            catch (Exception e)
             {
-                store.LeaveStore();
+                CompanionTelemetry.Event("LojaErro", "efeito de compra falhou (ignorado): " + e.Message);
             }
-            if (bought.Count > 0)
+        }
+
+        private static void SafeUpdateDisplay(UI_StoreScreenV2 store)
+        {
+            try
             {
-                CompanionPlugin.Say(bought.Count == 1 ? "Comprei " + bought[0] + "!" : "Comprei " + bought.Count + " coisas!");
+                store.UpdateStoreDisplay();
             }
-            else
+            catch (Exception e)
             {
-                CompanionPlugin.Say("Nada pra mim aqui!");
+                CompanionTelemetry.Event("LojaErro", "atualizar tela falhou (ignorado): " + e.Message);
+            }
+        }
+
+        private static string SafeStoreName(UI_StoreScreenV2 store)
+        {
+            try
+            {
+                return store.StoreDisplayData != null ? store.StoreDisplayData.StoreName + " / " + store.StoreDisplayData.StoreType : "?";
+            }
+            catch
+            {
+                return "?";
             }
         }
     }

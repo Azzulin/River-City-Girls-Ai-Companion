@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace RCGCompanion
 {
-    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.0.0")]
+    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.8.0")]
     public class CompanionPlugin : BaseUnityPlugin
     {
         internal static CompanionPlugin Instance;
@@ -116,7 +116,7 @@ namespace RCGCompanion
             CompanionTelemetry.Begin();
             AttackLearner.Load();
             new Harmony("rcg.aicompanion").PatchAll(typeof(CompanionPlugin).Assembly);
-            Log.LogInfo("RCG AI Companion 2.0 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
+            Log.LogInfo("RCG AI Companion v2.8 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
         }
 
         private void OnApplicationQuit()
@@ -177,6 +177,8 @@ namespace RCGCompanion
                 _nextLearnerSave = Time.time + 60f;
                 AttackLearner.Save();
             }
+
+            StoreWatchdog();
 
             if (!IsActive || GameState.CurrentState != GameStates.Playing)
             {
@@ -244,6 +246,45 @@ namespace RCGCompanion
                 CheckTeleport(p2, p1);
             }
         }
+
+        // Vigia da loja: roda mesmo com o jogo pausado. Se a vez do Player 2 ficar parada
+        // (sem a rotina da IA, ou com a rotina travada), fecha a loja para o jogador nao ficar preso.
+        private void StoreWatchdog()
+        {
+            UI_StoreScreenV2 store = UI_StoreScreenV2.Instance;
+            if (!IsActive || store == null || store.CurrentPlayerInput != 1)
+            {
+                _storeP2Since = -1f;
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            if (_storeP2Since < 0f)
+            {
+                _storeP2Since = now;
+                return;
+            }
+            bool hung;
+            string why;
+            if (StoreLeavePatch.TurnActive)
+            {
+                hung = now - StoreLeavePatch.TurnStartedAt > 25f;
+                why = "a vez dela passou de 25s";
+            }
+            else
+            {
+                hung = now - _storeP2Since > 4f;
+                why = "vez do Player 2 sem a IA controlando por 4s";
+            }
+            if (hung)
+            {
+                Log.LogWarning("Loja: " + why + ". Fechando a loja para nao prender o jogador.");
+                CompanionTelemetry.Event("LojaVigia", why + " -> fechando a loja");
+                _storeP2Since = -1f;
+                StoreLeavePatch.ForceLeave(store, "vigia: " + why);
+            }
+        }
+
+        private float _storeP2Since = -1f;
 
         private void TryAutoJoin(PlayerManager pm, RCG.Player p1)
         {
