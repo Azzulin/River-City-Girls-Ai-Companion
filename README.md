@@ -61,6 +61,10 @@ O pacote leva o BepInEx + a DLL + os guias de `docs/`. Os pacotes gerados ficam 
 ## Desinstalar
 Apague da pasta do jogo: `BepInEx\`, `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`, `changelog.txt`.
 
+## Licença
+[MIT](LICENSE): qualquer pessoa pode usar, copiar, modificar e redistribuir o código do mod livremente,
+mantendo o aviso de licença. A licença vale só para o código deste repositório (não para o jogo).
+
 ## Aviso
 Mod de fãs, **não oficial** e sem vínculo com a WayForward ou a Arc System Works.
 *River City Girls* e seus personagens pertencem aos respectivos donos. Este repositório contém
