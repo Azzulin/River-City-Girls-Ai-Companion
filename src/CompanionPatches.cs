@@ -272,6 +272,56 @@ namespace RCGCompanion
         }
     }
 
+    // GAME OVER: a tela "Continue / Quit" so aceita o controle de quem morreu POR ULTIMO.
+    // Se a parceira (IA, sem controle fisico) morria depois de voce, ninguem conseguia escolher
+    // nada (softlock relatado por tester). Com a IA ligada, a tela fica sempre com o Player 1.
+    [HarmonyPatch(typeof(UI_ContinueOrExit), "SetEnable")]
+    internal static class GameOverOwnerPatch
+    {
+        private static void Prefix(bool bEnable, ref int lastPlayerID)
+        {
+            if (bEnable && lastPlayerID != 0 && CompanionPlugin.IsActive)
+            {
+                CompanionTelemetry.Event("GameOver", "tela de Game Over era do Player " + (lastPlayerID + 1) + " (IA): passando o controle para o Player 1");
+                CompanionPlugin.Log.LogInfo("Game Over: controle da tela passado para o Player 1 (a parceira morreu por ultimo).");
+                lastPlayerID = 0;
+            }
+        }
+    }
+
+    // Segunda trava: mesmo que algo defina a tela para o Player 2, a IA ligada devolve para o Player 1.
+    // O Postfix registra cada mudanca de selecao/confirmacao (usado nos testes automaticos).
+    [HarmonyPatch(typeof(UI_ContinueOrExit_Main), "Update")]
+    internal static class GameOverInputPatch
+    {
+        private static readonly FieldInfo Selected = AccessTools.Field(typeof(UI_ContinueOrExit_Main), "_selected");
+        private static readonly FieldInfo Confirmed = AccessTools.Field(typeof(UI_ContinueOrExit_Main), "bSelected");
+        private static int _lastSelected = -2;
+        private static bool _lastConfirmed;
+
+        private static void Prefix(UI_ContinueOrExit_Main __instance)
+        {
+            if (__instance._LastDeathPlayerID != 0 && CompanionPlugin.IsActive)
+            {
+                __instance._LastDeathPlayerID = 0;
+            }
+        }
+
+        private static void Postfix(UI_ContinueOrExit_Main __instance)
+        {
+            int sel = (int)Selected.GetValue(__instance);
+            bool conf = (bool)Confirmed.GetValue(__instance);
+            if (sel != _lastSelected || conf != _lastConfirmed)
+            {
+                string opt = sel == 0 ? "Continue" : sel == 1 ? "Quit" : sel.ToString();
+                CompanionPlugin.Log.LogInfo("Game Over: selecao=" + opt + (conf ? " CONFIRMADO" : string.Empty) + " (controle do Player " + (__instance._LastDeathPlayerID + 1) + ")");
+                CompanionTelemetry.Event("GameOver", "selecao=" + opt + (conf ? " CONFIRMADO" : string.Empty));
+                _lastSelected = sel;
+                _lastConfirmed = conf;
+            }
+        }
+    }
+
     // Quando voce entra numa porta, a parceira entra junto (sem esperar a contagem de 10s).
     [HarmonyPatch(typeof(Door), "MultiPlayerCheckForSwitch")]
     internal static class DoorFollowPatch

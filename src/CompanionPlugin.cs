@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace RCGCompanion
 {
-    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.8.0")]
+    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.9.0")]
     public class CompanionPlugin : BaseUnityPlugin
     {
         internal static CompanionPlugin Instance;
@@ -52,6 +52,8 @@ namespace RCGCompanion
         internal static ConfigEntry<bool> UsePlatforming;
         internal static ConfigEntry<bool> UseAirAttacks;
         internal static ConfigEntry<bool> ActionLog;
+        internal static ConfigEntry<string> PartnerCharacter;
+        internal static ConfigEntry<bool> TestMode;
 
         internal static ConfigEntry<bool> VerboseLog;
 
@@ -112,11 +114,20 @@ namespace RCGCompanion
             _deathRespawnInstance = AccessTools.Field(typeof(DeathRespawnManager), "s_instance");
             _playerManagerInstance = AccessTools.Field(typeof(PlayerManager), "s_instance");
 
+            PartnerCharacter = Config.Bind("Geral", "PersonagemDaParceira", "Auto", new ConfigDescription(
+                "Quem a IA controla. Auto = a dupla padrao do jogo (Misako<->Kyoko, Kunio<->Riki). " +
+                "Kunio e Riki so ficam disponiveis depois de zerar o jogo. Nao pode ser o mesmo personagem que o seu.",
+                new AcceptableValueList<string>("Auto", "Misako", "Kyoko", "Kunio", "Riki")));
+            TestMode = Config.Bind("Debug", "ModoTeste", false, "Somente para desenvolvimento. F11 = provoca Game Over com a parceira morrendo por ultimo.");
             ActionLog = Config.Bind("Debug", "RegistroDeAcoes", true, "Grava todas as acoes dela em BepInEx\\RCG_AICompanion_acoes.log (com resumo de eficiencia a cada 60s). A sessao anterior fica em _anterior.log.");
             CompanionTelemetry.Begin();
             AttackLearner.Load();
             new Harmony("rcg.aicompanion").PatchAll(typeof(CompanionPlugin).Assembly);
-            Log.LogInfo("RCG AI Companion v2.8 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
+            Log.LogInfo("RCG AI Companion v2.9 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
+            if (TestMode.Value)
+            {
+                Log.LogWarning("MODO DE TESTE ATIVO (comandos em BepInEx\\teste_comando.txt, F11 = Game Over de teste).");
+            }
         }
 
         private void OnApplicationQuit()
@@ -179,6 +190,15 @@ namespace RCGCompanion
             }
 
             StoreWatchdog();
+
+            if (TestMode.Value)
+            {
+                if (new KeyboardShortcut(KeyCode.F11).IsDown())
+                {
+                    StartCoroutine(TestGameOverP2Last());
+                }
+                PollTestCommand();
+            }
 
             if (!IsActive || GameState.CurrentState != GameStates.Playing)
             {
@@ -286,6 +306,164 @@ namespace RCGCompanion
 
         private float _storeP2Since = -1f;
 
+        // TESTE: comandos por arquivo (BepInEx\teste_comando.txt), para testes automatizados sem depender
+        // de simulacao de teclado. O arquivo e apagado depois de lido.
+        private float _nextTestPoll;
+
+        private void PollTestCommand()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (now < _nextTestPoll)
+            {
+                return;
+            }
+            _nextTestPoll = now + 0.5f;
+            string path = System.IO.Path.Combine(Paths.BepInExRootPath, "teste_comando.txt");
+            if (!System.IO.File.Exists(path))
+            {
+                return;
+            }
+            string cmd;
+            try
+            {
+                cmd = System.IO.File.ReadAllText(path).Trim().ToLowerInvariant();
+                System.IO.File.Delete(path);
+            }
+            catch
+            {
+                return;
+            }
+            Log.LogInfo("TESTE comando recebido: " + cmd);
+            PlayerManager pm = PM;
+            switch (cmd)
+            {
+                case "gameover":
+                    StartCoroutine(TestGameOverP2Last());
+                    break;
+                case "status":
+                    Log.LogInfo("TESTE status: estado=" + GameState.CurrentState + " timeScale=" + Time.timeScale +
+                        " P1=" + (pm != null && pm.PlayerOne != null ? pm.PlayerOne.ClassName + " vida " + pm.PlayerOne.Stamina : "-") +
+                        " P2=" + (pm != null && pm.PlayerTwo != null ? pm.PlayerTwo.ClassName + " vida " + pm.PlayerTwo.Stamina : "-") +
+                        " IA=" + IsActive + " parceiraConfig=" + PartnerCharacter.Value +
+                        (GlobalSettings.instance != null ? " chars=" + GlobalSettings.instance.Player0Character + "/" + GlobalSettings.instance.Player1Character + " solo=" + GlobalSettings.instance.SinglePlayer : string.Empty));
+                    break;
+                case "inputs":
+                    StartCoroutine(TestDumpInputs());
+                    break;
+                case "gameover_auto":
+                    StartCoroutine(GameOverAutoTest.Run());
+                    break;
+                default:
+                    if (cmd.StartsWith("ui:") && TestInput.Queue(cmd.Substring(3)))
+                    {
+                        break;
+                    }
+                    Log.LogWarning("TESTE comando desconhecido: " + cmd);
+                    break;
+            }
+        }
+
+        // TESTE: durante 4s, registra o que os PlayerInput da tela de Game Over estao lendo.
+        private System.Collections.IEnumerator TestDumpInputs()
+        {
+            UI_ContinueOrExit_Main ui = UnityEngine.Object.FindObjectOfType<UI_ContinueOrExit_Main>();
+            if (ui == null)
+            {
+                Log.LogWarning("TESTE inputs: tela de Game Over nao encontrada.");
+                yield break;
+            }
+            PlayerInput[] ins = { ui._inputPlayer_0, ui._inputPlayer_1 };
+            for (int k = 0; k < 2; k++)
+            {
+                PlayerInput pi = ins[k];
+                if (pi == null)
+                {
+                    Log.LogInfo("TESTE inputs: _inputPlayer_" + k + " = null");
+                    continue;
+                }
+                Rewired.Player rp = pi.RewiredPlayer;
+                Log.LogInfo("TESTE inputs: _inputPlayer_" + k + " obj=" + pi.gameObject.name + " enabled=" + pi.enabled + " ativo=" + pi.isActiveAndEnabled +
+                    " PlayerID=" + pi.PlayerID + " lock=" + pi.LockInput +
+                    (rp != null ? " rewired: teclado=" + rp.controllers.hasKeyboard + " joysticks=" + rp.controllers.joystickCount : " rewired=null"));
+            }
+            float end = Time.realtimeSinceStartup + 4f;
+            int lastH = 99;
+            bool lastJ = false;
+            while (Time.realtimeSinceStartup < end)
+            {
+                PlayerInput p0 = ui._inputPlayer_0;
+                if (p0 != null && (p0.UI_HorizontalDir != lastH || p0.UI_Jump != lastJ))
+                {
+                    lastH = p0.UI_HorizontalDir;
+                    lastJ = p0.UI_Jump;
+                    Rewired.Player rp = p0.RewiredPlayer;
+                    Log.LogInfo("TESTE inputs: P1 UI_Horizontal=" + lastH + " UI_Jump=" + lastJ + (rp != null ? " eixoBruto=" + rp.GetAxis("MoveHorizontal").ToString("0.00") + " pulo=" + rp.GetButton("Jump") : string.Empty) + " estado=" + GameState.CurrentState);
+                }
+                yield return null;
+            }
+            Log.LogInfo("TESTE inputs: fim da amostragem.");
+        }
+
+        // TESTE: reproduz o relato do Game Over travado (voce morre primeiro, a parceira por ultimo).
+        private System.Collections.IEnumerator TestGameOverP2Last()
+        {
+            PlayerManager pm = PM;
+            if (pm == null || pm.PlayerOne == null || pm.PlayerTwo == null)
+            {
+                Log.LogWarning("TESTE Game Over: precisa dos dois jogadores em jogo.");
+                yield break;
+            }
+            Log.LogInfo("TESTE Game Over: matando o Player 1 e depois o Player 2...");
+            RCG.Player p1 = pm.PlayerOne;
+            RCG.Player p2 = pm.PlayerTwo;
+            p1.Stamina = 0;
+            Singleton<PlayerDeathManager>.instance.Die(p1);
+            yield return new WaitForSecondsRealtime(0.5f);
+            p2.Stamina = 0;
+            Singleton<PlayerDeathManager>.instance.Die(p2);
+            Log.LogInfo("TESTE Game Over: os dois morreram (Player 2 por ultimo). Tela deve aparecer com controle do Player 1.");
+        }
+
+        // Troca o personagem do Player 2 antes de ela entrar, se o jogador escolheu um na configuracao.
+        private static void ApplyPartnerChoice()
+        {
+            string choice = PartnerCharacter.Value;
+            if (string.IsNullOrEmpty(choice) || choice == "Auto" || GlobalSettings.instance == null)
+            {
+                return;
+            }
+            PlayerCharacters wanted;
+            try
+            {
+                wanted = (PlayerCharacters)Enum.Parse(typeof(PlayerCharacters), choice, true);
+            }
+            catch
+            {
+                return;
+            }
+            PlayerCharacters mine = GlobalSettings.instance.Player0Character;
+            if (wanted == mine)
+            {
+                Log.LogWarning("PersonagemDaParceira = " + choice + " e o mesmo personagem do Player 1; usando a dupla padrao.");
+                return;
+            }
+            bool needsBeatenGame = wanted == PlayerCharacters.Kunio || wanted == PlayerCharacters.Riki;
+            if (needsBeatenGame && (EventManager.instance == null || EventManager.instance.GetHasBeatenGameTimes() < 1))
+            {
+                Log.LogWarning("PersonagemDaParceira = " + choice + " ainda nao esta liberado (precisa zerar o jogo); usando a dupla padrao.");
+                return;
+            }
+            if (GlobalSettings.instance.Player1Character != wanted)
+            {
+                GlobalSettings.instance.SetPlayerCharacter(1, wanted);
+                if (UI_HUDManager.Instance != null)
+                {
+                    UI_HUDManager.Instance.SetPlayerHUDData(1, wanted);
+                }
+                Log.LogInfo("Parceira escolhida na configuracao: " + wanted);
+            }
+        }
+
         private void TryAutoJoin(PlayerManager pm, RCG.Player p1)
         {
             if (!AutoJoin.Value || p1 == null || !IsAlive(p1) || Time.time < _nextJoinAttempt)
@@ -300,6 +478,7 @@ namespace RCGCompanion
             }
             try
             {
+                ApplyPartnerChoice();
                 _spawnCheck.Invoke(drm, new object[] { 1 });
                 if (pm.PlayerTwo != null)
                 {
