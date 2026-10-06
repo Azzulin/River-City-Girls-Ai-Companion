@@ -1,0 +1,275 @@
+==============================================================================
+            RCG AI COMPANION v2.10 - MOD PARA RIVER CITY GIRLS 1
+           Parceira controlada por IA no lugar do Player 2 (co-op)
+                          >>> VERSAO DE TESTE <<<
+==============================================================================
+
+NOVIDADES DA v2.10
+------------------
+  - NOVO: aperte F7 durante o jogo para trocar a parceira na hora. Passa
+    pelas personagens disponiveis (nunca a mesma que a sua; Kunio e Riki
+    so depois de zerar). Cada personagem mantem o proprio progresso
+    (nivel, golpes, itens, dinheiro) e a escolha fica lembrada nas
+    proximas sessoes e fases. (Testado no jogo: troca, progresso mantido
+    e a escolha continua depois de reiniciar a fase.)
+
+  Da v2.9:
+  - CORRIGIDO: travamento no GAME OVER. Se a parceira caia DEPOIS de voce,
+    a tela "Continue / Quit" esperava o controle 2 (a IA) e voce nao
+    conseguia trocar nem confirmar nada. Agora, com a IA ligada, a tela e
+    sempre sua. (Testado no jogo: o bug original foi reproduzido primeiro
+    e depois a correcao confirmada - trocar, confirmar e reiniciar a fase
+    funcionam.)
+  - NOVA OPCAO: PersonagemDaParceira. Por padrao o jogo forma as duplas
+    Misako <-> Kyoko e Kunio <-> Riki - e regra do proprio jogo, por isso
+    escolhendo Riki a parceira e o Kunio e vice-versa. Agora da para
+    escolher a parceira (veja CONFIGURACOES).
+
+  Da v2.8:
+  - CORRIGIDO: o jogador podia ficar preso numa loja esperando a vez da
+    parceira. Um vigia de seguranca fecha a loja sozinho se travar.
+
+  Se voce ja tem uma versao anterior instalada, e so copiar os arquivos
+  novos por cima (escolha "Substituir").
+
+
+O QUE ESTE MOD FAZ
+------------------
+A Misako/Kyoko do Player 2 passa a ser controlada por uma IA. Ela:
+  - entra no jogo sozinha e te segue (inclusive pelas portas);
+  - luta junto: combos, golpes no chao, ataques aereos, especiais;
+  - defende, aprende o tempo dos golpes dos inimigos (parry) e esquiva;
+  - te revive quando voce cai;
+  - se cura com comida da mochila e pega comida que cai dos inimigos;
+  - pega armas do chao durante as lutas;
+  - faz as compras dela nas lojas e no dojo (golpes, comidas, acessorios);
+  - sobe de nivel e TUDO dela e salvo junto com o seu save;
+  - segue voce em plataformas e escadas (imita o caminho que voce fez);
+  - fala frases durante a luta.
+
+Nenhum arquivo original do jogo e modificado.
+
+Esta versao de teste ja vem com:
+  - a configuracao pronta para testes (relatorio de acoes e log detalhado
+    ligados);
+  - o que a IA ja aprendeu sobre o tempo dos golpes de 10 tipos de inimigo,
+    entao o parry dela ja funciona desde o comeco contra esses inimigos.
+
+
+O QUE TEM NESTA PASTA
+---------------------
+  LEIA-ME.txt               <- este arquivo, em portugues
+                               (NAO copie para o jogo)
+  README.txt                <- o mesmo tutorial, em ingles
+  COPY INTO GAME FOLDER\    <- o mod. O CONTEUDO desta pasta vai
+                               para a pasta do jogo.
+
+
+REQUISITOS
+----------
+  - River City Girls (o PRIMEIRO jogo) na Steam, para Windows.
+  - Nao precisa instalar mais nada: o carregador de mods (BepInEx) ja vem
+    dentro da pasta.
+
+
+------------------------------------------------------------------------------
+ PASSO A PASSO DA INSTALACAO
+------------------------------------------------------------------------------
+
+0) SE VOCE BAIXOU PELO GOOGLE DRIVE
+   O Drive entrega a pasta compactada (.zip). Clique com o botao direito no
+   arquivo baixado > "Extrair tudo..." e abra a pasta extraida.
+
+1) (RECOMENDADO) FACA BACKUP DO SEU SAVE
+   Aperte as teclas  Windows + R , cole o caminho abaixo e de Enter:
+
+     %USERPROFILE%\AppData\LocalLow\WayForward Technologies\River City Girls
+
+   Copie a pasta  _savedata  para um lugar seguro (ex.: Area de Trabalho).
+
+2) FECHE O JOGO se ele estiver aberto.
+
+3) ABRA A PASTA DO JOGO
+   Na Steam: Biblioteca > clique com o botao direito em "River City Girls"
+   > Gerenciar > Procurar arquivos locais.
+   Vai abrir a pasta onde fica o arquivo  RiverCityGirls.exe .
+   (Normalmente: C:\Program Files (x86)\Steam\steamapps\common\River City Girls)
+
+4) COPIE E COLE
+   a) Entre na pasta  "COPY INTO GAME FOLDER"  (desta pasta de teste).
+   b) Selecione tudo:  Ctrl + A
+   c) Copie:           Ctrl + C
+   d) Va para a pasta do jogo (passo 3) e cole:  Ctrl + V
+      Se o Windows perguntar, escolha "Substituir os arquivos no destino".
+      Se pedir permissao de administrador, clique em "Continuar".
+
+   Depois de colar, a pasta do jogo deve ficar assim:
+
+     River City Girls\
+       RiverCityGirls.exe          (ja existia)
+       RiverCityGirls_Data\        (ja existia)
+       winhttp.dll                 <- do mod
+       doorstop_config.ini         <- do mod
+       BepInEx\                    <- do mod
+         core\
+         config\
+         plugins\
+           RCG_AICompanion.dll
+
+   ATENCAO: o erro mais comum e colar a PASTA "COPY INTO GAME FOLDER"
+   inteira dentro do jogo. O winhttp.dll e a pasta BepInEx precisam ficar
+   DIRETO ao lado do RiverCityGirls.exe, nao dentro de outra pasta.
+
+   (Os arquivos ".doorstop_version" e "changelog.txt" sao opcionais; se o
+   Drive nao trouxer algum deles, tudo bem.)
+
+5) ABRA O JOGO PELA STEAM normalmente.
+   A primeira abertura pode demorar alguns segundos a mais (normal).
+
+6) CONFIRA SE O MOD CARREGOU
+   Na pasta do jogo, abra  BepInEx\LogOutput.log  com o Bloco de Notas.
+   Deve ter uma linha parecida com:
+
+     RCG AI Companion v2.10 carregado. F7 troca a parceira, F8 liga/desliga...
+
+   Se essa linha aparece, esta tudo certo!
+
+
+------------------------------------------------------------------------------
+ COMO JOGAR
+------------------------------------------------------------------------------
+
+  - Carregue seu save (ou comece um novo) normalmente, em 1 jogador.
+  - Alguns segundos depois a parceira entra sozinha como Player 2.
+  - Jogue normalmente. Ela vai lutar, te seguir, comprar, se curar etc.
+
+  TECLAS (teclado):
+    F7  = troca a parceira (passa pelas personagens disponiveis; a
+          escolha fica lembrada). Se ela estiver no ar ou caida, tente
+          de novo em instantes.
+    F8  = liga/desliga a IA. Desligada, um amigo pode usar o controle 2
+          normalmente (a IA "devolve" a personagem).
+    F9  = chama a parceira para perto de voce (se ela ficar presa).
+    F10 = troca a ordem dela:
+            Normal  >  Agressiva  >  Defensiva  >  Fica aqui
+          (o modo aparece escrito em cima dela)
+
+  LOJAS: quando voce sair de uma loja, o jogo passa a vez para o Player 2.
+  Voce vai ver ela fazendo as compras dela sozinha e depois a loja fecha.
+
+  PLATAFORMAS: ela aprende IMITANDO voce. Se voce subir numa plataforma,
+  ela refaz os seus pulos/escaladas. Se nao conseguir, ela e teleportada
+  para perto de voce depois de algumas tentativas.
+
+
+------------------------------------------------------------------------------
+ CONFIGURACOES (OPCIONAL)
+------------------------------------------------------------------------------
+
+Arquivo (na pasta do jogo):  BepInEx\config\rcg.aicompanion.cfg
+Abra com o Bloco de Notas, com o jogo FECHADO. Algumas opcoes uteis:
+
+  PersonagemDaParceira = Auto (Auto, Misako, Kyoko, Kunio ou Riki.
+                               Auto = dupla padrao do jogo. Kunio/Riki so
+                               depois de zerar; nao pode ser o mesmo
+                               personagem que o seu. Mais facil: aperte
+                               F7 durante o jogo)
+  Agressividade = 0.7         (0 = cautelosa ... 1 = muito agressiva)
+  ChanceDeDefender = 0.55     (0 a 1)
+  VidaParaCurar = 0.35        (come comida quando a vida cai abaixo de 35%)
+  UsarArmas / UsarParry / AtaquesAereos / Plataforma = true ou false
+  FazerCompras = true         (compras automaticas nas lojas)
+  DinheiroReserva = 10        (quanto dinheiro ela tenta guardar)
+  Falas = true                (frases em cima dela)
+  RegistroDeAcoes = true      (gera o relatorio para os testes - veja abaixo)
+  LogDetalhado = true         (mais detalhes no LogOutput.log)
+
+
+------------------------------------------------------------------------------
+ PARA TESTERS: O QUE TESTAR E COMO MANDAR O FEEDBACK
+------------------------------------------------------------------------------
+
+O mod grava um relatorio de tudo que a parceira faz. Depois de jogar,
+mande estes 2 arquivos (ficam dentro da pasta BepInEx, na pasta do jogo):
+
+  1) BepInEx\RCG_AICompanion_acoes.log
+       Linha do tempo de tudo que ela decidiu e fez + resumos de
+       eficiencia a cada 60 segundos (taxa de acerto, tempo parada etc).
+       IMPORTANTE: ele e recriado toda vez que o jogo abre. A sessao
+       anterior fica salva em  RCG_AICompanion_acoes_anterior.log .
+       Entao mande o arquivo ANTES de abrir o jogo de novo (ou mande
+       o "_anterior").
+
+  2) BepInEx\LogOutput.log
+       Log geral (erros, avisos, compras, curas).
+
+Junto com os arquivos, conte com suas palavras:
+  - O que ela fez de estranho/errado e mais ou menos QUANDO (inicio da
+    fase, luta contra chefe, numa loja...).
+  - Em que fase/lugar voce estava.
+  - O que voce esperava que ela fizesse.
+
+Coisas que vale a pena testar:
+  [ ] Ela entra sozinha depois que voce carrega o save?
+  [ ] Ela luta bem? Fica parada? Apanha muito pelas costas?
+  [ ] Ela bate em inimigos caidos (golpe no chao)?
+  [ ] Ela defende / faz parry / esquiva na hora certa?
+  [ ] Quando voce cai, ela vem te reviver?
+  [ ] Ela pega armas durante a luta e larga objetos pesados depois?
+  [ ] Lojas: ela faz a vez dela e compra coisas? O dinheiro dela diminui?
+  [ ] Ela sobe de nivel e o progresso dela continua depois de salvar
+      e carregar o jogo?
+  [ ] Plataformas/escadas: ela consegue te seguir?
+  [ ] Chefes: ela recua dos ataques perigosos?
+  [ ] F8, F9 e F10 funcionam?
+
+
+------------------------------------------------------------------------------
+ PROBLEMAS COMUNS
+------------------------------------------------------------------------------
+
+* A parceira nao aparece / nada mudou:
+    - Confira o passo 4: winhttp.dll e a pasta BepInEx tem que estar
+      DIRETO ao lado do RiverCityGirls.exe.
+    - Confira se existe o arquivo BepInEx\LogOutput.log depois de abrir
+      o jogo. Se NAO existe, o BepInEx nao carregou:
+        - alguns antivirus bloqueiam o winhttp.dll: adicione a pasta do
+          jogo nas excecoes do antivirus e copie os arquivos de novo.
+    - Espere alguns segundos depois de carregar o save; ela entra sozinha.
+    - Aperte F8 (pode ser que a IA tenha sido desligada).
+
+* Steam Deck / Linux (Proton):
+    Na Steam: botao direito no jogo > Propriedades > Geral > Opcoes de
+    inicializacao, coloque:
+        WINEDLLOVERRIDES="winhttp=n,b" %command%
+
+* O jogo atualizou e o mod parou de funcionar:
+    Copie os arquivos do mod de novo. Se ainda assim nao funcionar, avise:
+    a atualizacao pode ter mudado o codigo do jogo.
+
+* A tela de Game Over nao responde:
+    Corrigido na v2.9. Confira se o BepInEx\LogOutput.log diz
+    "v2.9 carregado". Se ainda acontecer, mande os dois logs.
+
+* Ficou preso na loja, na vez da parceira:
+    Desde a v2.8 isso nao deve mais acontecer: a loja fecha sozinha depois
+    de alguns segundos. Se ainda acontecer, mande os dois logs - o registro
+    de acoes grava cada etapa da vez dela na loja (linhas LOJAVEZ).
+
+* Ela ficou presa num lugar:
+    Aperte F9 para chama-la. Se acontecer sempre no mesmo lugar, avise
+    (mande os logs).
+
+
+------------------------------------------------------------------------------
+ COMO DESINSTALAR
+------------------------------------------------------------------------------
+
+Com o jogo fechado, apague da pasta do jogo:
+    BepInEx\   winhttp.dll   doorstop_config.ini
+    .doorstop_version   changelog.txt   (se existirem)
+
+O jogo volta ao normal. O progresso da parceira continua no seu save
+(ela e a personagem do Player 2 do proprio jogo).
+
+==============================================================================
