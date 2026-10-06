@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace RCGCompanion
 {
-    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.9.0")]
+    [BepInPlugin("rcg.aicompanion", "RCG AI Companion", "2.10.0")]
     public class CompanionPlugin : BaseUnityPlugin
     {
         internal static CompanionPlugin Instance;
@@ -53,6 +53,7 @@ namespace RCGCompanion
         internal static ConfigEntry<bool> UseAirAttacks;
         internal static ConfigEntry<bool> ActionLog;
         internal static ConfigEntry<string> PartnerCharacter;
+        internal static ConfigEntry<KeyboardShortcut> PartnerKey;
         internal static ConfigEntry<bool> TestMode;
 
         internal static ConfigEntry<bool> VerboseLog;
@@ -118,12 +119,13 @@ namespace RCGCompanion
                 "Quem a IA controla. Auto = a dupla padrao do jogo (Misako<->Kyoko, Kunio<->Riki). " +
                 "Kunio e Riki so ficam disponiveis depois de zerar o jogo. Nao pode ser o mesmo personagem que o seu.",
                 new AcceptableValueList<string>("Auto", "Misako", "Kyoko", "Kunio", "Riki")));
+            PartnerKey = Config.Bind("Geral", "TeclaTrocarParceira", new KeyboardShortcut(KeyCode.F7), "Troca a parceira na hora (passa pelas personagens disponiveis) e lembra a escolha.");
             TestMode = Config.Bind("Debug", "ModoTeste", false, "Somente para desenvolvimento. F11 = provoca Game Over com a parceira morrendo por ultimo.");
             ActionLog = Config.Bind("Debug", "RegistroDeAcoes", true, "Grava todas as acoes dela em BepInEx\\RCG_AICompanion_acoes.log (com resumo de eficiencia a cada 60s). A sessao anterior fica em _anterior.log.");
             CompanionTelemetry.Begin();
             AttackLearner.Load();
             new Harmony("rcg.aicompanion").PatchAll(typeof(CompanionPlugin).Assembly);
-            Log.LogInfo("RCG AI Companion v2.9 carregado. F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
+            Log.LogInfo("RCG AI Companion v2.10 carregado. F7 troca a parceira, F8 liga/desliga, F9 chama a parceira, F10 troca a ordem.");
             if (TestMode.Value)
             {
                 Log.LogWarning("MODO DE TESTE ATIVO (comandos em BepInEx\\teste_comando.txt, F11 = Game Over de teste).");
@@ -222,6 +224,11 @@ namespace RCGCompanion
                 }
                 _lastP1 = p1;
                 CompanionTelemetry.Event("Area", UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            }
+
+            if (PartnerKey.Value.IsDown())
+            {
+                CyclePartner();
             }
 
             if (ModeKey.Value.IsDown())
@@ -353,9 +360,26 @@ namespace RCGCompanion
                 case "gameover_auto":
                     StartCoroutine(GameOverAutoTest.Run());
                     break;
+                case "parceira_ciclo":
+                    CyclePartner();
+                    break;
                 default:
                     if (cmd.StartsWith("ui:") && TestInput.Queue(cmd.Substring(3)))
                     {
+                        break;
+                    }
+                    if (cmd.StartsWith("parceira:"))
+                    {
+                        // TESTE: troca ignorando o bloqueio de Kunio/Riki (para testar num save nao zerado).
+                        try
+                        {
+                            PlayerCharacters c = (PlayerCharacters)Enum.Parse(typeof(PlayerCharacters), cmd.Substring(9), true);
+                            Log.LogInfo("TESTE parceira: pedindo " + c + " -> " + (SwapPartner(c, true) ? "iniciado" : "recusado"));
+                        }
+                        catch (Exception e)
+                        {
+                            Log.LogWarning("TESTE parceira: " + e.Message);
+                        }
                         break;
                     }
                     Log.LogWarning("TESTE comando desconhecido: " + cmd);
@@ -424,6 +448,133 @@ namespace RCGCompanion
             Log.LogInfo("TESTE Game Over: os dois morreram (Player 2 por ultimo). Tela deve aparecer com controle do Player 1.");
         }
 
+        // ------------------------------------------------------------ Escolha da parceira
+
+        private static readonly PlayerCharacters[] PartnerOrder = { PlayerCharacters.Misako, PlayerCharacters.Kyoko, PlayerCharacters.Kunio, PlayerCharacters.Riki };
+        private static MethodInfo _spawnNewPlayer;
+        internal bool SwapInProgress;
+
+        private static bool BeatenGame
+        {
+            get { return EventManager.instance != null && EventManager.instance.GetHasBeatenGameTimes() >= 1; }
+        }
+
+        // Personagens que podem ser a parceira: nunca a mesma do jogador; Kunio/Riki so depois de zerar.
+        internal static List<PlayerCharacters> AvailablePartners(bool ignoreLock)
+        {
+            List<PlayerCharacters> list = new List<PlayerCharacters>();
+            PlayerCharacters mine = GlobalSettings.instance != null ? GlobalSettings.instance.Player0Character : PlayerCharacters.Kyoko;
+            foreach (PlayerCharacters c in PartnerOrder)
+            {
+                bool locked = (c == PlayerCharacters.Kunio || c == PlayerCharacters.Riki) && !BeatenGame;
+                if (c != mine && (ignoreLock || !locked))
+                {
+                    list.Add(c);
+                }
+            }
+            return list;
+        }
+
+        // F7: passa para a proxima parceira disponivel.
+        private void CyclePartner()
+        {
+            PlayerManager pm = PM;
+            if (pm == null || pm.PlayerTwo == null)
+            {
+                return;
+            }
+            List<PlayerCharacters> options = AvailablePartners(false);
+            PlayerCharacters current = pm.PlayerTwo.ClassNameToPlayerCharacter;
+            if (options.Count <= 1)
+            {
+                string only = options.Count == 1 ? options[0].ToString() : "-";
+                pm.PlayerTwo.DisplayTextAbove("So a " + only + " disponivel", true);
+                Log.LogInfo("Trocar parceira: so ha uma opcao disponivel (" + only + "). Kunio/Riki liberam depois de zerar o jogo.");
+                return;
+            }
+            int idx = options.IndexOf(current);
+            PlayerCharacters next = options[(idx + 1) % options.Count];
+            SwapPartner(next, false);
+        }
+
+        // Troca a parceira na hora: a atual sai (salvando o progresso dela) e a escolhida entra
+        // carregando o proprio progresso. Mesmo caminho do jogo quando um jogador sai e outro entra.
+        internal bool SwapPartner(PlayerCharacters wanted, bool ignoreLock)
+        {
+            PlayerManager pm = PM;
+            RCG.Player p2 = pm != null ? pm.PlayerTwo : null;
+            if (SwapInProgress || p2 == null || pm.PlayerOne == null || GlobalSettings.instance == null)
+            {
+                return false;
+            }
+            if (GameState.CurrentState != GameStates.Playing || !IsAlive(p2) || !p2.IsGrounded)
+            {
+                string why = GameState.CurrentState != GameStates.Playing ? "jogo nao esta em andamento" : !IsAlive(p2) ? "ela esta caida" : "ela esta no ar";
+                p2.DisplayTextAbove("Agora nao da!", true);
+                Log.LogInfo("Trocar parceira: agora nao da (" + why + "). Tente de novo em instantes.");
+                return false;
+            }
+            if (!AvailablePartners(ignoreLock).Contains(wanted))
+            {
+                Log.LogWarning("Trocar parceira: " + wanted + " nao esta disponivel.");
+                return false;
+            }
+            if (p2.ClassNameToPlayerCharacter == wanted)
+            {
+                return true;
+            }
+            if (_spawnNewPlayer == null)
+            {
+                _spawnNewPlayer = AccessTools.Method(typeof(DeathRespawnManager), "SpawnNewPlayer");
+            }
+            object drm = _deathRespawnInstance == null ? null : _deathRespawnInstance.GetValue(null);
+            if (drm == null || _spawnNewPlayer == null)
+            {
+                Log.LogWarning("Trocar parceira: nao encontrei o sistema de entrada de jogadores do jogo.");
+                return false;
+            }
+            PlayerCharacters old = p2.ClassNameToPlayerCharacter;
+            PartnerCharacter.Value = wanted.ToString(); // lembra a escolha para as proximas sessoes
+            StartCoroutine(DoSwap(pm, p2, wanted, drm));
+            Log.LogInfo("Trocando parceira: " + old + " -> " + wanted);
+            CompanionTelemetry.Event("TrocaParceira", old + " -> " + wanted);
+            return true;
+        }
+
+        private System.Collections.IEnumerator DoSwap(PlayerManager pm, RCG.Player p2, PlayerCharacters wanted, object drm)
+        {
+            SwapInProgress = true;
+            try
+            {
+                pm.PlayerQuit(p2); // salva o progresso dela e remove do jogo
+            }
+            catch (Exception e)
+            {
+                Log.LogError("Erro ao tirar a parceira atual: " + e);
+            }
+            yield return new WaitForSecondsRealtime(0.35f);
+            try
+            {
+                GlobalSettings.instance.SetPlayerCharacter(1, wanted);
+                if (UI_HUDManager.Instance != null)
+                {
+                    UI_HUDManager.Instance.SetPlayerHUDData(1, wanted);
+                }
+                _spawnNewPlayer.Invoke(drm, new object[] { 1, wanted });
+                Brain.Reset();
+                if (pm.PlayerTwo != null)
+                {
+                    pm.PlayerTwo.DisplayTextAbove("Oi! Sou a " + wanted + "!", false);
+                    Log.LogInfo("Parceira agora e " + pm.PlayerTwo.ClassName + " (nivel " + PlayerAttributes.Instance.Players[(int)wanted].Level + ")");
+                }
+            }
+            catch (Exception e)
+            {
+                Log.LogError("Erro ao colocar a nova parceira: " + e);
+            }
+            SwapInProgress = false;
+        }
+
         // Troca o personagem do Player 2 antes de ela entrar, se o jogador escolheu um na configuracao.
         private static void ApplyPartnerChoice()
         {
@@ -466,7 +617,7 @@ namespace RCGCompanion
 
         private void TryAutoJoin(PlayerManager pm, RCG.Player p1)
         {
-            if (!AutoJoin.Value || p1 == null || !IsAlive(p1) || Time.time < _nextJoinAttempt)
+            if (SwapInProgress || !AutoJoin.Value || p1 == null || !IsAlive(p1) || Time.time < _nextJoinAttempt)
             {
                 return;
             }
