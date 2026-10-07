@@ -1,71 +1,73 @@
 # RCG AI Companion (River City Girls 1)
 
-Mod que transforma o **Player 2 em uma parceira controlada por IA** no River City Girls 1 (Steam/PC).
-Feito com [BepInEx 5](https://github.com/BepInEx/BepInEx) + Harmony (o jogo é Unity 2018.2 / Mono).
-Nenhum arquivo original do jogo é alterado.
+*[Leia em português](README.pt-BR.md)*
 
-Versão atual: **v2.10** — veja o [CHANGELOG](CHANGELOG.md).
+A mod that turns **Player 2 into an AI-controlled partner** in River City Girls 1 (Steam/PC).
+Built with [BepInEx 5](https://github.com/BepInEx/BepInEx) + Harmony (the game runs on Unity 2018.2 / Mono).
+No original game files are modified.
 
-## O que ela faz
-- **Entra sozinha** no jogo e **segue você** (inclusive pelas portas, na hora).
-- **Luta junto**: prioriza quem está te batendo, faz combos, ataca inimigos caídos, usa especial e **ataques aéreos** (malabarismo, entrada pulando).
-- **Posicionamento**: ataca pelo lado oposto ao seu (pinça), evita o meio da multidão, contorna inimigos, sai do cerco e recua entre combos.
-- **Parry que aprende**: mede o tempo de cada golpe de cada inimigo e defende no instante certo; o aprendizado fica salvo em `BepInEx\config\rcg.aicompanion.parry.txt`.
-- **Esquiva** de golpes indefensáveis e de chefes; **chefes**: bate e recua, cai matando quando ele fica atordoado.
-- **Armas** do chão (só em combate), **recrutas**, **te revive**, **se cura** e pega comida do chão.
-- **Compras**: na loja ela tem a vez dela (visível): golpes do dojo, comidas com bônus permanente, comidas de reserva e acessórios (nota para os 35 efeitos; equipa os 2 melhores).
-- **Plataforma por imitação**: grava o seu caminho (pulos, pulos na parede, escadas) e refaz quando você está numa altura que ela não alcança.
-- **Personalidade**: frases sobre vitórias, reviver, nível, parry, chefes...
-- **Progresso salvo** junto com o seu save (o jogo salva tudo por personagem).
+Current version: **v2.10** — see the [CHANGELOG](CHANGELOG.md).
 
-## Teclas
-| Tecla | Ação |
+## What she does
+- **Joins the game on her own** and **follows you** (including through doors, instantly).
+- **Fights alongside you**: prioritizes whoever is hitting you, does combos, attacks downed enemies, uses specials and **air attacks** (juggles, jump-in attacks).
+- **Positioning**: attacks from the side opposite to yours (pincer), avoids the middle of the crowd, goes around enemies, escapes being surrounded and backs off between combos.
+- **Learning parry**: measures the timing of each attack of each enemy and blocks at the right moment; what she learns is saved in `BepInEx\config\rcg.aicompanion.parry.txt`.
+- **Dodges** unblockable attacks and boss attacks; **bosses**: hit and back off, then goes all in when the boss is stunned.
+- **Weapons** from the ground (only in combat), **recruits**, **revives you**, **heals herself** and picks up food from the ground.
+- **Shopping**: at the shop she gets her own (visible) turn: dojo moves, food with permanent bonuses, reserve food and accessories (scores all 35 effects; equips the best 2).
+- **Platforming by imitation**: records your path (jumps, wall jumps, ladders) and replays it when you are at a height she can't reach.
+- **Personality**: lines about victories, revives, leveling up, parries, bosses...
+- **Progress saved** along with your save (the game saves everything per character).
+
+## Keys
+| Key | Action |
 |---|---|
-| **F7** | Troca a parceira (passa pelas disponíveis; a escolha fica salva) |
-| **F8** | Liga/desliga a IA (desligada, um amigo pode usar o controle 2) |
-| **F9** | Chama a parceira para perto |
-| **F10** | Ordens: Normal → Agressiva → Defensiva → Fica aqui |
+| **F7** | Switch partner (cycles through the available ones; the choice is saved) |
+| **F8** | Toggle the AI on/off (when off, a friend can use controller 2) |
+| **F9** | Call the partner to your side |
+| **F10** | Orders: Normal → Aggressive → Defensive → Stay here |
 
-## Estrutura do repositório
+## Repository structure
 ```
-src/                      código do mod (C# 5, compilado com o csc do .NET Framework)
-  CompanionPlugin.cs      plugin BepInEx: configuração, teclas, entrada automática, cura, teleporte, troca de parceira, vigia da loja
-  CompanionBrain.cs       IA de combate: alvos, combos, defesa/parry, posicionamento, reviver, armas, aéreos
-  CompanionNavigator.cs   plataforma por imitação (grava e refaz o caminho do jogador)
-  CompanionShopper.cs     compras e acessórios
-  CompanionPatches.cs     patches Harmony (entrada do P2, loja, portas, Game Over, eventos de dano)
-  AttackLearner.cs        aprendizado do tempo dos golpes (parry)
-  CompanionSpeech.cs      falas
-  CompanionTelemetry.cs   registro de ações + resumos de eficiência
-  CompanionTestHarness.cs ferramentas de teste (só com ModoTeste)
-docs/                     guias para testers (inglês e português)
-build.ps1                 compila e instala a DLL no jogo
+src/                      mod source code (C# 5, compiled with the .NET Framework csc)
+  CompanionPlugin.cs      BepInEx plugin: config, keys, auto-join, healing, teleport, partner switching, shop watcher
+  CompanionBrain.cs       combat AI: targeting, combos, defense/parry, positioning, reviving, weapons, air attacks
+  CompanionNavigator.cs   platforming by imitation (records and replays the player's path)
+  CompanionShopper.cs     shopping and accessories
+  CompanionPatches.cs     Harmony patches (P2 join, shop, doors, Game Over, damage events)
+  AttackLearner.cs        attack timing learning (parry)
+  CompanionSpeech.cs      dialogue lines
+  CompanionTelemetry.cs   action log + efficiency summaries
+  CompanionTestHarness.cs test tools (only with ModoTeste)
+docs/                     tester guides (English and Portuguese)
+build.ps1                 builds the DLL and installs it into the game
 ```
 
-## Compilar
-Requisitos: River City Girls instalado pela Steam + BepInEx 5.4.23.5 (x64) na pasta do jogo.
+## Building
+Requirements: River City Girls installed via Steam + BepInEx 5.4.23.5 (x64) in the game folder.
 ```
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
-Feche o jogo antes (a DLL fica travada enquanto ele está aberto). O script compila contra as DLLs do próprio jogo e copia o resultado para `BepInEx\plugins`.
-Se o jogo estiver em outro lugar: `build.ps1 -GameDir "D:\...\River City Girls"`.
+Close the game first (the DLL stays locked while it is running). The script compiles against the game's own DLLs and copies the result to `BepInEx\plugins`.
+If the game is installed elsewhere: `build.ps1 -GameDir "D:\...\River City Girls"`.
 
-## Testes
-- Logs: `BepInEx\LogOutput.log` e `BepInEx\RCG_AICompanion_acoes.log` (linha do tempo + resumos de eficiência a cada 60s).
-- Modo de teste (`[Debug] ModoTeste = true`): comandos em `BepInEx\teste_comando.txt` — `status`, `gameover_auto`, `ui:confirmar`/`ui:baixo`/..., `parceira:<nome>`, `parceira_ciclo`. **Desligue depois** (F11 provoca Game Over).
-- Faça backup do save antes de testar: `%USERPROFILE%\AppData\LocalLow\WayForward Technologies\River City Girls\_savedata`.
+## Testing
+- Logs: `BepInEx\LogOutput.log` and `BepInEx\RCG_AICompanion_acoes.log` (timeline + efficiency summaries every 60s).
+- Test mode (`[Debug] ModoTeste = true`): commands in `BepInEx\teste_comando.txt` — `status`, `gameover_auto`, `ui:confirmar`/`ui:baixo`/..., `parceira:<name>`, `parceira_ciclo`. **Turn it off afterwards** (F11 triggers a Game Over).
+- Back up your save before testing: `%USERPROFILE%\AppData\LocalLow\WayForward Technologies\River City Girls\_savedata`.
 
-## Distribuição para testers
-O pacote leva o BepInEx + a DLL + os guias de `docs/`. Os pacotes gerados ficam em `dist/` (fora do git).
+## Distribution to testers
+The package includes BepInEx + the DLL + the guides from `docs/`. Generated packages go in `dist/` (not tracked by git).
 
-## Desinstalar
-Apague da pasta do jogo: `BepInEx\`, `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`, `changelog.txt`.
+## Uninstalling
+Delete from the game folder: `BepInEx\`, `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`, `changelog.txt`.
 
-## Licença
-[MIT](LICENSE): qualquer pessoa pode usar, copiar, modificar e redistribuir o código do mod livremente,
-mantendo o aviso de licença. A licença vale só para o código deste repositório (não para o jogo).
+## License
+[MIT](LICENSE): anyone may freely use, copy, modify and redistribute the mod's code,
+as long as the license notice is kept. The license covers only the code in this repository (not the game).
 
-## Aviso
-Mod de fãs, **não oficial** e sem vínculo com a WayForward ou a Arc System Works.
-*River City Girls* e seus personagens pertencem aos respectivos donos. Este repositório contém
-apenas o código do mod — nenhum arquivo, asset ou código do jogo. É preciso ter o jogo original (Steam).
+## Disclaimer
+Fan-made, **unofficial** mod, not affiliated with WayForward or Arc System Works.
+*River City Girls* and its characters belong to their respective owners. This repository contains
+only the mod's code — no game files, assets or code. You need the original game (Steam).
